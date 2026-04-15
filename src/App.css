@@ -1,0 +1,1108 @@
+import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+
+// ═══════════════════════════════════════════════════════════════
+//  CLIENTE SUPABASE — fetch nativo (sem npm)
+// ═══════════════════════════════════════════════════════════════
+function criarSupabase(url, key) {
+  const H = { "apikey":key,"Authorization":`Bearer ${key}`,"Content-Type":"application/json","Prefer":"return=representation" };
+  const q = (tb) => ({
+    _tb:tb,_f:[],_ord:null,_lim:null,
+    eq(c,v){this._f.push(`${c}=eq.${v}`);return this;},
+    order(c,{ascending:a=true}={}){this._ord=`${c}.${a?"asc":"desc"}`;return this;},
+    limit(n){this._lim=n;return this;},
+    _url(){let u=`${url}/rest/v1/${this._tb}?select=*`;if(this._f.length)u+="&"+this._f.join("&");if(this._ord)u+=`&order=${this._ord}`;if(this._lim)u+=`&limit=${this._lim}`;return u;},
+    async select(){try{const r=await fetch(this._url(),{headers:H});return{data:r.ok?await r.json():[],error:null};}catch(e){return{data:[],error:e.message};}},
+    async then(res){try{const r=await fetch(this._url(),{headers:H});res({data:r.ok?await r.json():[],error:null});}catch(e){res({data:[],error:e.message});}},
+    async insert(body){try{const r=await fetch(`${url}/rest/v1/${this._tb}`,{method:"POST",headers:H,body:JSON.stringify(Array.isArray(body)?body:[body])});const d=r.ok?await r.json():null;return{data:d?.[0]??d,error:r.ok?null:await r.text()};}catch(e){return{data:null,error:e.message};}},
+    async update(body){try{const fs=this._f.length?"?"+this._f.join("&"):"";const r=await fetch(`${url}/rest/v1/${this._tb}${fs}`,{method:"PATCH",headers:H,body:JSON.stringify(body)});return{error:r.ok?null:await r.text()};}catch(e){return{error:e.message};}},
+    async delete(){try{const fs=this._f.length?"?"+this._f.join("&"):"";const r=await fetch(`${url}/rest/v1/${this._tb}${fs}`,{method:"DELETE",headers:H});return{error:r.ok?null:await r.text()};}catch(e){return{error:e.message};}},
+    async single(){const res=await this.select();return{data:res.data?.[0]??null,error:res.error};},
+  });
+  return{from:(tb)=>q(tb)};
+}
+const CFG_KEY="jas_cfg";
+function salvarCfg(u,k){try{localStorage.setItem(CFG_KEY,JSON.stringify({u,k}));}catch{}}
+function lerCfg(){try{return JSON.parse(localStorage.getItem(CFG_KEY)||"null");}catch{return null;}}
+
+// ═══════════════════════════════════════════════════════════════
+//  DESIGN — Identidade Visual Juvenal Antonio da Silva
+// ═══════════════════════════════════════════════════════════════
+const C = {
+  // Cores extraídas do logo
+  navy:    "#0b1230",   // fundo escuro
+  navy2:   "#111a3e",   // cards
+  navy3:   "#1a2760",   // hover
+  blue:    "#1e3280",   // azul do logo (quadrado)
+  blue2:   "#253d99",   // azul claro
+  red:     "#cc1122",   // ponto vermelho do logo
+  red2:    "#e0192b",   // vermelho hover
+  redBg:   "#2a0508",   // fundo vermelho
+  white:   "#f5f5f8",   // texto principal
+  white2:  "#b0b8d0",   // texto secundário
+  muted:   "#5a6a9a",   // texto terciário
+  border:  "#1c2a60",   // borda padrão
+  borderR: "#cc112244", // borda vermelha
+  gold:    "#c8a84b",   // dourado suave para detalhes
+  green:   "#1a8a4a",   greenBg:"#051a0a",
+  amber:   "#c87820",   amberBg:"#1a1005",
+};
+
+const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,600;1,400&family=Great+Vibes&display=swap');`;
+
+const STATUS_C = {
+  "Em andamento":{bg:C.navy3,   text:"#5bc0de",bord:"#2a5a9c"},
+  "Aguardando":  {bg:C.amberBg,text:"#e0a030",bord:"#6a4a10"},
+  "Urgente":     {bg:C.redBg,  text:"#e05050",bord:"#8a2020"},
+  "Concluído":   {bg:C.greenBg,text:"#40c080",bord:"#1a6040"},
+};
+const PAPEL_LABEL={socio_fundador:"Sócio-Fundador",socio:"Sócio",advogado_pleno:"Advogado Pleno",advogado_junior:"Advogado Júnior",estagiario:"Estagiário"};
+const PAPEL_COR={socio_fundador:C.red,socio:"#5bc0de",advogado_pleno:"#40c080",advogado_junior:C.amber,estagiario:"#8a9ab0"};
+const PERMISSOES={
+  socio_fundador:{processos:{l:1,c:1,e:1,x:1},notas:{l:1,c:1,x:1},arquivos:{l:1,c:1,x:1},usuarios:{l:1,c:1,e:1,x:1},auditoria:{l:1},ia:{l:1,c:1},diario:{l:1,c:1},drive:{l:1,c:1}},
+  socio:         {processos:{l:1,c:1,e:1,x:1},notas:{l:1,c:1},arquivos:{l:1,c:1},usuarios:{l:1},auditoria:{l:1},ia:{l:1,c:1},diario:{l:1,c:1},drive:{l:1,c:1}},
+  advogado_pleno:{processos:{l:1,c:1,e:1},notas:{l:1,c:1},arquivos:{l:1,c:1},usuarios:{l:1},auditoria:{},ia:{l:1,c:1},diario:{l:1,c:1},drive:{l:1}},
+  advogado_junior:{processos:{l:1},notas:{l:1,c:1},arquivos:{l:1},usuarios:{l:1},auditoria:{},ia:{l:1},diario:{l:1},drive:{l:1}},
+  estagiario:    {processos:{l:1},notas:{l:1},arquivos:{l:1},usuarios:{},auditoria:{},ia:{},diario:{l:1},drive:{}},
+};
+const MESES=["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+const TIPO_ICO={audiencia:"⚖️",documento:"📄",despacho:"📋",recurso:"🔄",sentenca:"🏛️",notificacao:"🔔",distribuicao:"📥",encerramento:"✅",laudo:"🔬"};
+const ARQ_ICO={peticao:"📋",laudo:"🔬",documento:"📄",planilha:"📊"};
+
+function fmtBR(s){if(!s)return"—";const[y,m,d]=s.slice(0,10).split("-");return`${d} ${MESES[+m-1]} ${y}`;}
+function fmt(s){if(!s)return"—";const[y,m,d]=s.slice(0,10).split("-");return`${d}/${m}/${y}`;}
+function pode(papel,rec,a){return!!PERMISSOES[papel]?.[rec]?.[a];}
+
+// ═══════════════════════════════════════════════════════════════
+//  CONTEXT
+// ═══════════════════════════════════════════════════════════════
+const Ctx=createContext(null);
+const useSeg=()=>useContext(Ctx);
+
+// ═══════════════════════════════════════════════════════════════
+//  LOGO SVG — Fiel ao logo Juvenal Antonio da Silva
+// ═══════════════════════════════════════════════════════════════
+function LogoJAS({size=60,modo="full"}){
+  const sq=size;
+  return(
+    <div style={{display:"flex",flexDirection:modo==="horizontal"?"row":"column",alignItems:"center",gap:modo==="horizontal"?14:8}}>
+      {/* Quadrado azul com J cursivo e ponto vermelho */}
+      <div style={{position:"relative",flexShrink:0}}>
+        <svg width={sq} height={sq} viewBox="0 0 100 100">
+          {/* Quadrado azul marinho */}
+          <rect x="8" y="4" width="84" height="84" rx="2" fill={C.blue}/>
+          {/* J cursivo em branco */}
+          <text x="50" y="72" textAnchor="middle" fill="white"
+            fontSize="80" fontFamily="'Great Vibes', cursive"
+            style={{fontStyle:"italic"}}>J</text>
+          {/* Sombra/reflexo do J saindo do quadrado */}
+          <path d="M28 80 Q35 92 50 95 Q65 97 72 88" fill="none" stroke="white" strokeWidth="3.5" strokeLinecap="round" opacity="0.9"/>
+        </svg>
+        {/* Ponto vermelho — fora e abaixo do quadrado à direita */}
+        <div style={{position:"absolute",bottom:sq*0.05,right:-sq*0.08,width:sq*0.18,height:sq*0.18,borderRadius:"50%",background:C.red,boxShadow:`0 2px 8px ${C.red}88`}}/>
+      </div>
+      {/* Texto */}
+      {modo!=="icon"&&(
+        <div style={{textAlign:modo==="horizontal"?"left":"center"}}>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:modo==="horizontal"?Math.max(14,sq*0.28):Math.max(11,sq*0.22),fontWeight:400,color:C.white,letterSpacing:0.5,lineHeight:1.1,whiteSpace:"nowrap"}}>
+            Juvenal Antonio da Silva
+          </div>
+          <div style={{fontFamily:"'Great Vibes',cursive",fontSize:modo==="horizontal"?Math.max(12,sq*0.22):Math.max(10,sq*0.18),color:C.white2,letterSpacing:1,marginTop:2,whiteSpace:"nowrap"}}>
+            Advogados Associados
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  COMPONENTES BASE
+// ═══════════════════════════════════════════════════════════════
+function Av({u,sz=32}){
+  const cor=PAPEL_COR[u?.papel]||u?.cor||C.muted;
+  return<div style={{width:sz,height:sz,borderRadius:"50%",background:cor+"22",border:`2px solid ${cor}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:sz*.35,color:cor,fontWeight:"bold",flexShrink:0}}>{u?.avatar||"?"}</div>;
+}
+function SBadge({status,lg}){
+  const sc=STATUS_C[status]||STATUS_C["Em andamento"];
+  return<span style={{background:sc.bg,color:sc.text,border:`1px solid ${sc.bord}`,borderRadius:20,padding:lg?"5px 14px":"2px 9px",fontSize:lg?12:10,whiteSpace:"nowrap",fontFamily:"'EB Garamond',serif"}}>{status}</span>;
+}
+function PBadge({papel}){
+  const cor=PAPEL_COR[papel]||C.muted;
+  return<span style={{background:cor+"22",color:cor,border:`1px solid ${cor}44`,borderRadius:10,padding:"2px 10px",fontSize:10}}>{PAPEL_LABEL[papel]||papel}</span>;
+}
+function Btn({children,onClick,v="p",disabled,sm,sx={}}){
+  const[hov,setHov]=useState(false);
+  const S={
+    p:{bg:hov?C.blue2:C.blue,cl:C.white,bo:`1px solid ${C.blue2}`},
+    r:{bg:hov?C.red2:C.red,cl:C.white,bo:`1px solid ${C.red2}`},
+    g:{bg:"transparent",cl:C.white2,bo:`1px solid ${C.border}`},
+    d:{bg:hov?"#5a1010":C.redBg,cl:"#e05050",bo:"1px solid #8a2020"},
+    ok:{bg:hov?"#1a5a2a":C.greenBg,cl:"#40c080",bo:`1px solid ${C.green}`},
+  };
+  const s=S[v]||S.p;
+  return<button onClick={onClick} disabled={disabled} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)} style={{background:s.bg,color:s.cl,border:s.bo,borderRadius:4,padding:sm?"4px 10px":"8px 18px",cursor:disabled?"not-allowed":"pointer",fontSize:sm?10:12,fontFamily:"'EB Garamond',serif",opacity:disabled?.4:1,transition:"all 0.18s",...sx}}>{children}</button>;
+}
+function Card({children,sx={},red=false,onClick}){
+  const[hov,setHov]=useState(false);
+  return<div onClick={onClick} onMouseEnter={()=>onClick&&setHov(true)} onMouseLeave={()=>setHov(false)} style={{background:C.navy2,border:`1px solid ${hov&&onClick?C.red:red?C.borderR:C.border}`,borderRadius:8,padding:20,transition:"all 0.18s",cursor:onClick?"pointer":"default",boxShadow:hov&&onClick?`0 4px 20px ${C.red}22`:"none",...sx}}>{children}</div>;
+}
+function Div({red=false,my=14}){
+  return<div style={{display:"flex",alignItems:"center",gap:10,margin:`${my}px 0`}}>
+    <div style={{flex:1,height:1,background:`linear-gradient(90deg,transparent,${red?C.red:C.border})`}}/>
+    {red&&<div style={{width:8,height:8,borderRadius:"50%",background:C.red,boxShadow:`0 0 6px ${C.red}`}}/>}
+    {red&&<div style={{flex:1,height:1,background:`linear-gradient(90deg,${red?C.red:C.border},transparent)`}}/>}
+  </div>;
+}
+function Spin({txt="Carregando..."}){
+  return<div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:60,gap:16}}>
+    <LogoJAS size={56} modo="icon"/>
+    <div style={{color:C.muted,fontSize:13,fontFamily:"'EB Garamond',serif"}}>{txt}</div>
+    <div style={{display:"flex",gap:6}}>{[0,1,2].map(i=><div key={i} style={{width:6,height:6,borderRadius:"50%",background:C.red,animation:"pulse 1s ease-in-out infinite",animationDelay:`${i*.2}s`}}/>)}</div>
+  </div>;
+}
+function Toast({msg,tipo="ok",onClose}){
+  useEffect(()=>{const t=setTimeout(onClose,3500);return()=>clearTimeout(t);},[]);
+  const TC={ok:{bg:C.greenBg,text:"#40c080",bord:C.green},erro:{bg:C.redBg,text:"#e05050",bord:"#8a2020"},av:{bg:C.amberBg,text:C.amber,bord:"#6a4a10"}};
+  const tc=TC[tipo]||TC.ok;
+  return<div style={{position:"fixed",bottom:24,right:24,background:tc.bg,border:`1px solid ${tc.bord}`,borderRadius:8,padding:"12px 20px",color:tc.text,fontSize:13,zIndex:9999,boxShadow:"0 4px 24px #000a",display:"flex",gap:10,alignItems:"center",fontFamily:"'EB Garamond',serif"}}>
+    {tipo==="ok"?"✓":tipo==="erro"?"✕":"⚠"} {msg}
+    <button onClick={onClose} style={{background:"none",border:"none",color:tc.text,cursor:"pointer",marginLeft:4}}>✕</button>
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GUIA DE INSTALAÇÃO — Tela índice
+// ═══════════════════════════════════════════════════════════════
+function GuiaInstalacao({onVoltar}){
+  const[aba,setAba]=useState("windows");
+  const abas=[["windows","💻 Windows"],["mac","🍎 Mac"],["android","📱 Android"],["iphone","📱 iPhone"],["vercel","🌐 Internet"]];
+  const passoCls=(n,txt,detail)=>(
+    <div style={{display:"flex",gap:14,marginBottom:18}}>
+      <div style={{width:30,height:30,borderRadius:"50%",background:C.red,color:C.white,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:"bold",flexShrink:0}}>{n}</div>
+      <div style={{paddingTop:4}}><div style={{color:C.white,fontSize:14,fontFamily:"'Playfair Display',serif",marginBottom:3}}>{txt}</div><div style={{color:C.white2,fontSize:12,lineHeight:1.7}}>{detail}</div></div>
+    </div>
+  );
+  const cod=(txt)=><div style={{background:C.navy,border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 14px",fontFamily:"monospace",fontSize:12,color:"#7ec8e3",margin:"8px 0"}}>{txt}</div>;
+  return(
+    <div style={{minHeight:"100vh",background:C.navy,fontFamily:"'EB Garamond',serif"}}>
+      <style>{FONTS}<br/>{`@keyframes pulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}`}</style>
+      {/* Header */}
+      <div style={{background:C.navy2,borderBottom:`1px solid ${C.border}`,padding:"16px 32px",display:"flex",alignItems:"center",gap:16}}>
+        <button onClick={onVoltar} style={{background:"none",border:`1px solid ${C.border}`,color:C.white2,borderRadius:4,padding:"6px 12px",cursor:"pointer",fontSize:12}}>← Voltar</button>
+        <LogoJAS size={40} modo="horizontal"/>
+        <div style={{marginLeft:"auto",fontFamily:"'Playfair Display',serif",color:C.white,fontSize:18}}>Guia de Instalação</div>
+      </div>
+      <div style={{maxWidth:860,margin:"0 auto",padding:"32px 24px"}}>
+        {/* Banner */}
+        <div style={{background:`linear-gradient(135deg,${C.blue},${C.navy3})`,border:`1px solid ${C.blue2}`,borderRadius:10,padding:28,marginBottom:28,position:"relative",overflow:"hidden"}}>
+          <div style={{position:"absolute",top:-20,right:-20,width:120,height:120,borderRadius:"50%",background:C.red,opacity:0.08}}/>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:22,color:C.white,marginBottom:8}}>📲 Instalar o Sistema como Aplicativo</div>
+          <div style={{color:C.white2,fontSize:14,lineHeight:1.8}}>O sistema funciona como <strong style={{color:C.white}}>PWA (Progressive Web App)</strong> — tecnologia que permite instalar o sistema direto no dispositivo, como um app nativo, <strong style={{color:C.white}}>sem passar pela App Store ou Google Play</strong>.</div>
+          <div style={{display:"flex",gap:12,marginTop:16,flexWrap:"wrap"}}>
+            {["✅ Ícone na tela inicial","✅ Abre sem browser","✅ Funciona offline","✅ Notificações"].map(t=><span key={t} style={{background:C.white+"18",color:C.white,borderRadius:20,padding:"4px 12px",fontSize:11}}>{t}</span>)}
+          </div>
+        </div>
+        {/* Abas */}
+        <div style={{display:"flex",gap:4,marginBottom:20,flexWrap:"wrap"}}>
+          {abas.map(([v,l])=><button key={v} onClick={()=>setAba(v)} style={{background:aba===v?C.red:"transparent",color:aba===v?C.white:C.white2,border:`1px solid ${aba===v?C.red:C.border}`,borderRadius:6,padding:"7px 14px",cursor:"pointer",fontSize:12,fontFamily:"'EB Garamond',serif"}}>{l}</button>)}
+        </div>
+        <Card>
+          {aba==="windows"&&<>
+            <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:17,marginBottom:16}}>Instalação no Windows (Chrome ou Edge)</div>
+            {passoCls(1,"Instale o Node.js",<>Acesse <strong style={{color:C.white}}>nodejs.org</strong> e baixe a versão LTS. Isso instala o Node e o npm.</>)}
+            {passoCls(2,"Crie o projeto React",<></>)}
+            {cod("npm create vite@latest juvenal-adv -- --template react\ncd juvenal-adv\nnpm install")}
+            {passoCls(3,"Coloque os arquivos do sistema",<>Substitua <strong style={{color:C.white}}>src/App.jsx</strong> pelo arquivo <strong style={{color:C.white}}>juvenal-adv.jsx</strong>. Coloque <strong style={{color:C.white}}>manifest.json</strong>, <strong style={{color:C.white}}>sw.js</strong> e <strong style={{color:C.white}}>favicon.svg</strong> dentro da pasta <strong style={{color:C.white}}>public/</strong>. Substitua o <strong style={{color:C.white}}>index.html</strong> e o <strong style={{color:C.white}}>vite.config.js</strong>.</>)}
+            {passoCls(4,"Configure o arquivo .env",<>Crie um arquivo <strong style={{color:C.white}}>.env</strong> na raiz com as credenciais do Supabase:</>)}
+            {cod("VITE_SUPABASE_URL=https://xxxx.supabase.co\nVITE_SUPABASE_ANON_KEY=eyJhbGci...")}
+            {passoCls(5,"Rode o sistema",<></>)}
+            {cod("npm run dev")}
+            {passoCls(6,"Instale como app",<>Abra <strong style={{color:C.white}}>http://localhost:5173</strong> no Chrome ou Edge. Clique no ícone <strong style={{color:C.white}}>⊕</strong> na barra de endereços ou vá em <strong style={{color:C.white}}>Menu → Instalar Juvenal Adv.</strong> O app aparece na área de trabalho e no Menu Iniciar.</>)}
+          </>}
+          {aba==="mac"&&<>
+            <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:17,marginBottom:16}}>Instalação no Mac (Chrome)</div>
+            {passoCls(1,"Instale o Node.js",<>Acesse <strong style={{color:C.white}}>nodejs.org</strong> ou use o Homebrew: </>)}
+            {cod("brew install node")}
+            {passoCls(2,"Siga os mesmos passos do Windows","Crie o projeto, substitua os arquivos, configure o .env.")}
+            {passoCls(3,"Rode o sistema",<></>)}
+            {cod("npm run dev")}
+            {passoCls(4,"Instale no Mac",<>Abra no Chrome → clique no ícone de instalação (⊕) na barra de endereços → clique <strong style={{color:C.white}}>Instalar</strong>. O app aparece no Launchpad e pode ser arrastado para o Dock.<br/><br/><span style={{color:C.amber}}>⚠ Safari no Mac não suporta instalação de PWA local. Use o Chrome.</span></>)}
+          </>}
+          {aba==="android"&&<>
+            <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:17,marginBottom:16}}>Instalar no Android</div>
+            <div style={{background:C.navy3,borderRadius:6,padding:14,marginBottom:16,border:`1px solid ${C.border}`}}>
+              <div style={{color:C.amber,fontSize:12,marginBottom:4}}>⚠ Pré-requisito</div>
+              <div style={{color:C.white2,fontSize:13}}>O celular e o computador precisam estar na mesma rede Wi-Fi. Ou use a opção "Internet" para acesso remoto.</div>
+            </div>
+            {passoCls(1,"Descubra o IP do computador","No terminal do computador, rode:")}
+            {cod("# Windows:\nipconfig\n\n# Mac/Linux:\nifconfig | grep inet")}
+            {passoCls(2,"Rode o sistema com acesso à rede",<></>)}
+            {cod("npm run dev\n\n# O terminal mostrará:\n# Local:   http://localhost:5173/\n# Network: http://192.168.1.50:5173/  ← use este")}
+            {passoCls(3,"No Android (Chrome)",<>
+              1. Abra o Chrome no celular<br/>
+              2. Digite o endereço Network (ex: <strong style={{color:C.white}}>http://192.168.1.50:5173</strong>)<br/>
+              3. Aguarde o sistema carregar<br/>
+              4. Toque nos <strong style={{color:C.white}}>3 pontinhos (⋮)</strong><br/>
+              5. Toque em <strong style={{color:C.white}}>"Adicionar à tela inicial"</strong><br/>
+              6. Toque em <strong style={{color:C.white}}>"Adicionar"</strong><br/>
+              ✅ O ícone com o "J" aparece na tela inicial
+            </>)}
+          </>}
+          {aba==="iphone"&&<>
+            <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:17,marginBottom:16}}>Instalar no iPhone / iPad</div>
+            <div style={{background:C.navy3,borderRadius:6,padding:14,marginBottom:16,border:`1px solid ${C.border}`}}>
+              <div style={{color:C.red,fontSize:12,marginBottom:4}}>⚠ Importante para iPhone</div>
+              <div style={{color:C.white2,fontSize:13}}>No iPhone, a instalação de PWA funciona <strong style={{color:C.white}}>somente pelo Safari</strong>. O Chrome no iPhone não suporta "Adicionar à Tela de Início".</div>
+            </div>
+            {passoCls(1,"No iPhone, abra o Safari","Não use o Chrome para instalar.")}
+            {passoCls(2,"Digite o endereço do sistema",<>Use o endereço Network do computador (mesma rede Wi-Fi) ou o link da Vercel (aba Internet).</>)}
+            {passoCls(3,"Adicionar à Tela de Início",<>
+              1. Toque no botão <strong style={{color:C.white}}>Compartilhar</strong> (□↑) na barra inferior<br/>
+              2. Role para baixo e toque em <strong style={{color:C.white}}>"Adicionar à Tela de Início"</strong><br/>
+              3. Edite o nome se quiser (sugerido: <em>Juvenal Adv.</em>)<br/>
+              4. Toque em <strong style={{color:C.white}}>"Adicionar"</strong> no canto superior direito<br/>
+              ✅ O ícone aparece na tela inicial do iPhone como app nativo
+            </>)}
+          </>}
+          {aba==="vercel"&&<>
+            <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:17,marginBottom:16}}>Publicar na Internet (acesso de qualquer lugar)</div>
+            <div style={{background:`linear-gradient(135deg,${C.navy3},${C.blue}22)`,borderRadius:6,padding:14,marginBottom:16,border:`1px solid ${C.blue}`}}>
+              <div style={{color:"#5bc0de",fontSize:12,marginBottom:4}}>💡 Vantagem</div>
+              <div style={{color:C.white2,fontSize:13}}>Com a Vercel, qualquer advogado acessa o sistema de qualquer lugar, a qualquer hora, em qualquer dispositivo — basta ter internet.</div>
+            </div>
+            {passoCls(1,"Crie conta no GitHub (grátis)",<>Acesse <strong style={{color:C.white}}>github.com</strong> → Sign up</>)}
+            {passoCls(2,"Suba o projeto para o GitHub",<></>)}
+            {cod("git init\ngit add .\ngit commit -m 'Juvenal Adv. v1'\ngit remote add origin https://github.com/seu-usuario/juvenal-adv.git\ngit push -u origin main")}
+            {passoCls(3,"Deploy na Vercel (grátis)",<>
+              1. Acesse <strong style={{color:C.white}}>vercel.com</strong> → Login com GitHub<br/>
+              2. Clique em <strong style={{color:C.white}}>"New Project"</strong><br/>
+              3. Selecione o repositório <strong style={{color:C.white}}>juvenal-adv</strong><br/>
+              4. Clique em <strong style={{color:C.white}}>"Deploy"</strong> — pronto em ~2 minutos
+            </>)}
+            {passoCls(4,"Configure as variáveis de ambiente na Vercel",<>Vá em Settings → Environment Variables e adicione:</>)}
+            {cod("VITE_SUPABASE_URL        = https://xxxx.supabase.co\nVITE_SUPABASE_ANON_KEY  = eyJhbGci...")}
+            {passoCls(5,"URL pública gerada",<>O sistema ficará disponível em: <strong style={{color:C.white}}>https://juvenal-adv.vercel.app</strong><br/>Use essa URL para instalar no celular de todos os advogados.</>)}
+          </>}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DIÁRIO OFICIAL — Busca por Nome + OAB/SP
+// ═══════════════════════════════════════════════════════════════
+function DiarioOficial(){
+  const{usuario,auditar}=useSeg();
+  const[nome,setNome]=useState(usuario?.nome||"");
+  const[oab,setOab]=useState("");
+  const[periodo,setPeriodo]=useState("30");
+  const[buscando,setBuscando]=useState(false);
+  const[resultados,setResultados]=useState(null);
+  const[fontes,setFontes]=useState({doesp:true,dje:true,dou:true,djt:false});
+  const[historico,setHistorico]=useState([]);
+
+  const fontesLabel={doesp:"DOESP — Diário Oficial do Estado de SP",dje:"DJE — Diário da Justiça Eletrônico SP",dou:"DOU — Diário Oficial da União",djt:"DJT — Diário da Justiça do Trabalho"};
+
+  const buscar=async()=>{
+    if(!nome.trim())return;
+    setBuscando(true);setResultados(null);
+    const fontesSel=Object.entries(fontes).filter(([,v])=>v).map(([k])=>fontesLabel[k]).join(", ");
+    const prompt=`Você é um assistente jurídico especializado em pesquisa no Diário Oficial brasileiro.
+
+O usuário solicita uma busca de publicações referentes a:
+- **Nome do advogado/parte**: ${nome}
+- **OAB/SP**: ${oab?`Nº ${oab}/SP`:"não informado"}
+- **Período**: Últimos ${periodo} dias
+- **Fontes selecionadas**: ${fontesSel}
+
+Por favor:
+1. Explique como fazer essa busca em cada fonte selecionada (com URLs diretas)
+2. Liste os termos de busca recomendados para encontrar publicações
+3. Informe quais tipos de publicações costumam aparecer nesses diários para advogados (citações, intimações, despachos, sentenças)
+4. Oriente sobre o uso do sistema de busca do DJE-SP (https://www.dje.tjsp.jus.br/) e DOESP (https://www.imprensaoficial.com.br/)
+5. Forneça as URLs exatas de busca com o nome preenchido quando possível
+
+Seja direto, prático e forneça os links para pesquisa imediata. Responda em português brasileiro.`;
+
+    try{
+      const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+        model:"claude-sonnet-4-20250514",max_tokens:1000,
+        tools:[{type:"web_search_20250305",name:"web_search"}],
+        messages:[{role:"user",content:prompt}]
+      })});
+      const d=await r.json();
+      const texto=d.content?.filter(b=>b.type==="text").map(b=>b.text).join("\n")||"Sem resultado.";
+      setResultados(texto);
+      const entry={id:Date.now(),nome,oab,periodo,fontes:{...fontes},data:new Date().toLocaleDateString("pt-BR"),resumo:texto.slice(0,120)+"..."};
+      setHistorico(prev=>[entry,...prev].slice(0,10));
+      await auditar("BUSCA_DIARIO_OFICIAL",null,{nome,oab,periodo});
+    }catch{setResultados("⚠ Erro ao buscar. Verifique sua conexão.");}
+    setBuscando(false);
+  };
+
+  const linksRapidos=[
+    {label:"DJE-SP",url:`https://www.dje.tjsp.jus.br/cdje/consultaSimples.do?dadosConsulta.pesquisaLivre=${encodeURIComponent(nome)}`,cor:"#5bc0de"},
+    {label:"DOESP",url:"https://www.imprensaoficial.com.br/DO/BuscaDO2001Resultado_11_3.aspx",cor:"#40c080"},
+    {label:"DOU",url:`https://www.in.gov.br/consulta/-/buscar/dou?q=${encodeURIComponent(nome)}&exactDate=personalizado&startDate=&endDate=`,cor:C.amber},
+    {label:"PROJUDI-SP",url:"https://projudi.tjba.jus.br/projudi/",cor:C.red},
+  ];
+
+  return(
+    <div>
+      <div style={{marginBottom:20}}>
+        <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,color:C.white,marginBottom:4}}>Pesquisa no Diário Oficial</div>
+        <div style={{color:C.muted,fontSize:13}}>Busque publicações por nome do advogado vinculado ao número OAB/SP.</div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+        <Card>
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:2,marginBottom:5}}>Nome do Advogado / Parte</div>
+            <input value={nome} onChange={e=>setNome(e.target.value)} placeholder="Ex: Juvenal Antonio da Silva" style={{width:"100%",background:C.navy,border:`1px solid ${C.border}`,borderRadius:4,padding:"9px 12px",color:C.white,fontSize:13,outline:"none",fontFamily:"'EB Garamond',serif",boxSizing:"border-box"}} onFocus={e=>e.target.style.borderColor=C.red} onBlur={e=>e.target.style.borderColor=C.border}/>
+          </div>
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:2,marginBottom:5}}>Número OAB/SP</div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <input value={oab} onChange={e=>setOab(e.target.value.replace(/\D/g,""))} placeholder="123456" style={{flex:1,background:C.navy,border:`1px solid ${C.border}`,borderRadius:4,padding:"9px 12px",color:C.white,fontSize:13,outline:"none",fontFamily:"'EB Garamond',serif",boxSizing:"border-box"}} onFocus={e=>e.target.style.borderColor=C.red} onBlur={e=>e.target.style.borderColor=C.border}/>
+              <div style={{background:C.blue,color:C.white,borderRadius:4,padding:"9px 12px",fontSize:12,whiteSpace:"nowrap"}}>OAB/SP</div>
+            </div>
+          </div>
+          <div>
+            <div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:2,marginBottom:5}}>Período</div>
+            <select value={periodo} onChange={e=>setPeriodo(e.target.value)} style={{width:"100%",background:C.navy,border:`1px solid ${C.border}`,borderRadius:4,padding:"9px 12px",color:C.white,fontSize:13,outline:"none",fontFamily:"'EB Garamond',serif"}}>
+              <option value="7">Últimos 7 dias</option>
+              <option value="15">Últimos 15 dias</option>
+              <option value="30">Últimos 30 dias</option>
+              <option value="60">Últimos 60 dias</option>
+              <option value="90">Últimos 90 dias</option>
+            </select>
+          </div>
+        </Card>
+        <Card>
+          <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:13,marginBottom:14}}>Fontes de Busca</div>
+          {Object.entries(fontesLabel).map(([k,l])=>(
+            <div key={k} onClick={()=>setFontes(f=>({...f,[k]:!f[k]}))} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:`1px solid ${C.border}`,cursor:"pointer"}}>
+              <div style={{width:18,height:18,borderRadius:3,border:`2px solid ${fontes[k]?C.red:C.border}`,background:fontes[k]?C.red:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.15s"}}>
+                {fontes[k]&&<span style={{color:C.white,fontSize:12}}>✓</span>}
+              </div>
+              <span style={{color:fontes[k]?C.white:C.white2,fontSize:12}}>{l}</span>
+            </div>
+          ))}
+          <Btn onClick={buscar} disabled={!nome.trim()||buscando} v="r" sx={{width:"100%",marginTop:16,padding:"11px",fontSize:13}}>
+            {buscando?"🔍 Buscando...":"🔍 Buscar no Diário Oficial"}
+          </Btn>
+        </Card>
+      </div>
+
+      {/* Links rápidos */}
+      <Card sx={{marginBottom:16}}>
+        <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:13,marginBottom:12}}>⚡ Acesso Direto aos Portais</div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          {linksRapidos.map(({label,url,cor})=>(
+            <a key={label} href={nome?url.replace("undefined",encodeURIComponent(nome)):url} target="_blank" rel="noopener noreferrer" style={{background:cor+"22",color:cor,border:`1px solid ${cor}44`,borderRadius:6,padding:"8px 16px",fontSize:12,textDecoration:"none",display:"flex",alignItems:"center",gap:6,transition:"all 0.15s"}} onMouseEnter={e=>{e.currentTarget.style.background=cor+"44";}} onMouseLeave={e=>{e.currentTarget.style.background=cor+"22";}}>
+              🔗 {label}
+            </a>
+          ))}
+        </div>
+      </Card>
+
+      {/* Resultado da busca */}
+      {buscando&&<Card><Spin txt="Consultando Diário Oficial com IA..."/></Card>}
+      {resultados&&!buscando&&(
+        <Card>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:14}}>📋 Resultado da Busca</div>
+            <div style={{color:C.muted,fontSize:11}}>{nome}{oab&&` — OAB/SP ${oab}`}</div>
+          </div>
+          <Div red my={0}/>
+          <div style={{background:C.navy,borderRadius:6,padding:18,marginTop:12,border:`1px solid ${C.border}`,maxHeight:400,overflowY:"auto"}}>
+            <div style={{color:C.white,fontSize:13,lineHeight:1.9,whiteSpace:"pre-wrap",fontFamily:"'EB Garamond',serif"}}>{resultados}</div>
+          </div>
+          <div style={{display:"flex",gap:8,marginTop:12,justifyContent:"flex-end"}}>
+            <Btn onClick={()=>navigator.clipboard?.writeText(resultados)} v="g" sm>Copiar</Btn>
+          </div>
+        </Card>
+      )}
+
+      {/* Histórico */}
+      {historico.length>0&&(
+        <Card sx={{marginTop:16}}>
+          <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:13,marginBottom:12}}>🕐 Histórico de Buscas</div>
+          {historico.map(h=>(
+            <div key={h.id} onClick={()=>{setNome(h.nome);setOab(h.oab);setPeriodo(h.periodo);setFontes(h.fontes);}} style={{padding:"8px 0",borderBottom:`1px solid ${C.border}`,cursor:"pointer",transition:"opacity 0.15s"}} onMouseEnter={e=>e.currentTarget.style.opacity="0.7"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
+              <div style={{color:C.white,fontSize:12}}>{h.nome}{h.oab&&<span style={{color:C.muted,marginLeft:8}}>OAB/SP {h.oab}</span>}</div>
+              <div style={{color:C.muted,fontSize:10,marginTop:2}}>{h.data} · {h.periodo} dias</div>
+            </div>
+          ))}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GOOGLE DRIVE — Geração de pastas por processo
+// ═══════════════════════════════════════════════════════════════
+function GoogleDriveModule({processos}){
+  const{usuario,auditar,toast}=useSeg();
+  const[criando,setCriando]=useState(false);
+  const[estrutura,setEstrutura]=useState(null);
+  const[procSel,setProcSel]=useState("");
+  const[gdToken,setGdToken]=useState("");
+  const[status,setStatus]=useState("");
+
+  const ESTRUTURA_PASTAS=[
+    "📁 01 - Petições e Manifestações",
+    "📁 02 - Decisões e Despachos",
+    "📁 03 - Intimações e Citações",
+    "📁 04 - Laudos e Perícias",
+    "📁 05 - Documentos do Cliente",
+    "📁 06 - Contratos e Honorários",
+    "📁 07 - Correspondências",
+    "📁 08 - Diário Oficial",
+    "📁 09 - Recursos e Apelações",
+    "📁 10 - Encerramento",
+  ];
+
+  const proc=processos.find(p=>p.id===procSel);
+
+  const gerarEstrutura=()=>{
+    if(!proc)return;
+    setEstrutura({
+      raiz:`[${proc.id}] ${proc.cliente} vs ${proc.adverso}`,
+      subpastas:ESTRUTURA_PASTAS,
+      nomePasta:`JAS — ${proc.cliente.split(" ").slice(0,2).join(" ")} — ${proc.id.slice(-8)}`,
+    });
+  };
+
+  const abrirDrive=()=>{
+    const query=estrutura?`folder/${estrutura.nomePasta}`:"";
+    window.open(`https://drive.google.com/drive/u/0/my-drive`,"_blank");
+    toast("Google Drive aberto! Crie a pasta conforme o modelo gerado.","ok");
+    auditar("ABRIR_GOOGLE_DRIVE","processo:"+procSel);
+  };
+
+  const copiarEstrutura=()=>{
+    if(!estrutura)return;
+    const txt=`📂 ${estrutura.raiz}\n${estrutura.subpastas.map(s=>`   ${s}`).join("\n")}`;
+    navigator.clipboard?.writeText(txt);
+    toast("Estrutura copiada para a área de transferência!","ok");
+  };
+
+  return(
+    <div>
+      <div style={{marginBottom:20}}>
+        <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,color:C.white,marginBottom:4}}>Google Drive — Geração de Pastas</div>
+        <div style={{color:C.muted,fontSize:13}}>Gere a estrutura de pastas padronizada para cada processo e abra diretamente no Google Drive.</div>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+        {/* Seletor de processo */}
+        <Card>
+          <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:14,marginBottom:14}}>Selecionar Processo</div>
+          <select value={procSel} onChange={e=>{setProcSel(e.target.value);setEstrutura(null);}} style={{width:"100%",background:C.navy,border:`1px solid ${C.border}`,borderRadius:4,padding:"9px 12px",color:C.white,fontSize:13,outline:"none",fontFamily:"'EB Garamond',serif",marginBottom:14}}>
+            <option value="">— Selecione um processo —</option>
+            {processos.map(p=><option key={p.id} value={p.id}>{p.cliente} — {p.id.slice(-12)}</option>)}
+          </select>
+          {proc&&(
+            <div style={{background:C.navy,borderRadius:6,padding:12,border:`1px solid ${C.border}`}}>
+              <div style={{color:C.white2,fontSize:12,marginBottom:4}}><span style={{color:C.muted}}>Cliente:</span> {proc.cliente}</div>
+              <div style={{color:C.white2,fontSize:12,marginBottom:4}}><span style={{color:C.muted}}>Adverso:</span> {proc.adverso}</div>
+              <div style={{color:C.white2,fontSize:12,marginBottom:4}}><span style={{color:C.muted}}>Área:</span> {proc.area}</div>
+              <div style={{color:C.white2,fontSize:12}}><span style={{color:C.muted}}>Número:</span> {proc.id}</div>
+            </div>
+          )}
+          <Btn onClick={gerarEstrutura} disabled={!procSel} v="r" sx={{width:"100%",marginTop:14,padding:"11px"}}>
+            Gerar Estrutura de Pastas
+          </Btn>
+        </Card>
+
+        {/* Visualização da estrutura */}
+        <Card>
+          <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:14,marginBottom:14}}>Estrutura Padrão</div>
+          {!estrutura&&(
+            <div style={{color:C.muted,fontSize:12,textAlign:"center",padding:"30px 0"}}>
+              Selecione um processo para visualizar a estrutura de pastas que será criada.
+            </div>
+          )}
+          {estrutura&&(
+            <>
+              <div style={{background:C.navy,borderRadius:6,padding:14,border:`1px solid ${C.border}`,marginBottom:14}}>
+                <div style={{color:C.red,fontSize:11,marginBottom:8,fontFamily:"'Playfair Display',serif"}}>📂 {estrutura.raiz}</div>
+                {estrutura.subpastas.map((s,i)=><div key={i} style={{color:C.white2,fontSize:12,padding:"3px 0 3px 16px",borderLeft:`2px solid ${C.border}`}}>{s}</div>)}
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <Btn onClick={copiarEstrutura} v="g" sx={{flex:1}}>📋 Copiar</Btn>
+                <Btn onClick={abrirDrive} v="r" sx={{flex:1}}>📂 Abrir Drive</Btn>
+              </div>
+            </>
+          )}
+        </Card>
+      </div>
+
+      {/* Instruções Google Drive */}
+      <Card>
+        <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:14,marginBottom:14}}>Como usar com o Google Drive</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
+          {[
+            {n:"1",t:"Gere a estrutura",d:"Selecione o processo e clique em 'Gerar Estrutura de Pastas' para criar o modelo padronizado do escritório."},
+            {n:"2",t:"Copie e abra o Drive",d:"Clique em 'Copiar' para copiar a estrutura, depois clique em 'Abrir Drive' para ir direto ao Google Drive."},
+            {n:"3",t:"Crie as pastas",d:"No Drive, crie uma nova pasta com o nome do processo e crie as subpastas conforme o modelo copiado."},
+          ].map(({n,t,d})=>(
+            <div key={n} style={{background:C.navy,borderRadius:6,padding:14,border:`1px solid ${C.border}`}}>
+              <div style={{width:24,height:24,borderRadius:"50%",background:C.red,color:C.white,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:"bold",marginBottom:8}}>{n}</div>
+              <div style={{color:C.white,fontSize:13,fontFamily:"'Playfair Display',serif",marginBottom:6}}>{t}</div>
+              <div style={{color:C.muted,fontSize:11,lineHeight:1.7}}>{d}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{marginTop:16,padding:12,background:C.blue+"22",border:`1px solid ${C.blue}44`,borderRadius:6}}>
+          <div style={{color:"#5bc0de",fontSize:12,marginBottom:4}}>💡 Dica de integração avançada</div>
+          <div style={{color:C.white2,fontSize:12,lineHeight:1.7}}>Para integração automática com o Google Drive (criar pastas sem sair do sistema), conecte o Google Drive nas configurações de conectores do Claude.ai e o sistema passará a criar as pastas automaticamente com um clique.</div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MODAL IA
+// ═══════════════════════════════════════════════════════════════
+function ModalIA({proc,tipo,onClose}){
+  const[res,setRes]=useState("");const[load,setLoad]=useState(true);
+  const P={sinopse:`Gere uma SINOPSE EXECUTIVA profissional do processo:\n\n${JSON.stringify(proc,null,2)}`,historico:`Gere um HISTÓRICO CRONOLÓGICO DETALHADO:\n\n${JSON.stringify(proc,null,2)}`,passos:`Você é advogado sênior em ${proc.area}. Sugira: (1) Medidas imediatas (2) Estratégias (3) Petições a elaborar (4) Alertas de risco.\n\n${JSON.stringify(proc,null,2)}`};
+  const TIT={sinopse:"📋 Sinopse Executiva",historico:"📜 Histórico do Caso",passos:"🎯 Próximos Passos & Petições"};
+  useEffect(()=>{(async()=>{try{const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages:[{role:"user",content:P[tipo]}]})});const d=await r.json();setRes(d.content?.map(b=>b.text||"").join("")||"Erro.");}catch{setRes("⚠ Erro de conexão.");}setLoad(false);})();},[]);
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200}}>
+      <div style={{background:C.navy2,border:`1px solid ${C.blue}`,borderRadius:12,padding:32,width:720,maxHeight:"86vh",display:"flex",flexDirection:"column",boxShadow:"0 24px 80px #000"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:18}}>{TIT[tipo]}</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.white2,fontSize:22,cursor:"pointer"}}>✕</button>
+        </div>
+        <div style={{color:C.muted,fontSize:11,marginBottom:14}}>{proc.cliente} — {proc.id}</div>
+        <Div red my={0}/>
+        <div style={{flex:1,overflowY:"auto",background:C.navy,borderRadius:6,padding:20,marginTop:14,border:`1px solid ${C.border}`}}>
+          {load?<Spin txt="Analisando com Inteligência Artificial..."/>:<div style={{color:C.white,fontSize:13,lineHeight:1.9,whiteSpace:"pre-wrap",fontFamily:"'EB Garamond',serif"}}>{res}</div>}
+        </div>
+        <div style={{marginTop:14,display:"flex",justifyContent:"flex-end",gap:8}}><Btn onClick={()=>navigator.clipboard?.writeText(res)} v="g">Copiar</Btn><Btn onClick={onClose} v="r">Fechar</Btn></div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MODAL PIN
+// ═══════════════════════════════════════════════════════════════
+function ModalPin({msg,onOk,onCancel}){
+  const{usuario}=useSeg();const[pin,setPin]=useState("");const[err,setErr]=useState("");const[t,setT]=useState(0);
+  const ok=()=>{if(pin!==usuario.senha){const n=t+1;setT(n);setErr(n>=3?"Bloqueado após 3 tentativas.":`Incorreta. ${3-n} tentativa(s).`);if(n>=3)setTimeout(onCancel,1200);return;}onOk();};
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500}}>
+      <div style={{background:C.navy2,border:`1px solid ${C.red}`,borderRadius:12,padding:40,width:380,textAlign:"center",boxShadow:"0 24px 80px #000"}}>
+        <div style={{fontSize:40,marginBottom:14}}>🔐</div>
+        <div style={{fontFamily:"'Playfair Display',serif",color:C.red,fontSize:16,marginBottom:8}}>Confirmação de Segurança</div>
+        <div style={{color:C.white2,fontSize:13,marginBottom:18,lineHeight:1.7,fontFamily:"'EB Garamond',serif"}}>{msg}</div>
+        <input type="password" value={pin} onChange={e=>{setPin(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&ok()} placeholder="••••••••" style={{width:"100%",background:C.navy,border:"1px solid #8a2020",borderRadius:4,padding:"11px",color:C.white,fontSize:14,outline:"none",textAlign:"center",letterSpacing:6,fontFamily:"'EB Garamond',serif",boxSizing:"border-box",marginBottom:8}}/>
+        {err&&<div style={{color:"#e05050",fontSize:11,marginBottom:10}}>{err}</div>}
+        <div style={{display:"flex",gap:10,justifyContent:"center"}}><Btn onClick={onCancel} v="g">Cancelar</Btn><Btn onClick={ok} v="d" disabled={!pin}>Confirmar</Btn></div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ALERTA SESSÃO
+// ═══════════════════════════════════════════════════════════════
+function AlertaSessao({onRenovar,onSair}){
+  const[s,setS]=useState(300);
+  useEffect(()=>{const i=setInterval(()=>setS(x=>x>0?x-1:0),1000);return()=>clearInterval(i);},[]);
+  const mm=String(Math.floor(s/60)).padStart(2,"0"),ss=String(s%60).padStart(2,"0");
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:600}}>
+      <div style={{background:C.navy2,border:`1px solid ${C.amber}`,borderRadius:12,padding:40,width:340,textAlign:"center"}}>
+        <div style={{fontSize:36,marginBottom:10}}>⏱️</div>
+        <div style={{fontFamily:"'Playfair Display',serif",color:C.amber,fontSize:15,marginBottom:8}}>Sessão Expirando</div>
+        <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:36,fontWeight:700,marginBottom:8}}>{mm}:{ss}</div>
+        <div style={{color:C.white2,fontSize:12,marginBottom:20,fontFamily:"'EB Garamond',serif"}}>Sua sessão será encerrada por inatividade.</div>
+        <div style={{display:"flex",gap:10,justifyContent:"center"}}><Btn onClick={onSair} v="g">Encerrar</Btn><Btn onClick={onRenovar} v="r">Continuar</Btn></div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PROVEDOR DE SEGURANÇA
+// ═══════════════════════════════════════════════════════════════
+function SegProvider({sb,children}){
+  const[usuario,setUsuario]=useState(null);const[alerta,setAlerta]=useState(false);const[pin,setPin]=useState(null);const[toasts,setToasts]=useState([]);
+  const tmr=useRef(null);const atm=useRef(null);
+  const toast=(msg,tipo="ok")=>{const id=Date.now();setToasts(p=>[...p,{id,msg,tipo}]);};
+  const auditar=useCallback(async(acao,recurso=null,det=null,resultado="sucesso")=>{
+    if(!usuario||!sb)return;
+    sb.from("auditoria").insert({usuario_id:usuario.id,usuario_nome:usuario.nome,acao,recurso,detalhes:det?JSON.stringify(det):null,resultado});
+  },[usuario,sb]);
+  const reset=useCallback(()=>{clearTimeout(tmr.current);clearTimeout(atm.current);if(!usuario)return;
+    atm.current=setTimeout(()=>setAlerta(true),25*60*1000);
+    tmr.current=setTimeout(()=>logout("timeout"),30*60*1000);
+  },[usuario]);
+  useEffect(()=>{const evs=["mousedown","keydown","scroll","touchstart"];const h=()=>{setAlerta(false);reset();};evs.forEach(e=>window.addEventListener(e,h));return()=>evs.forEach(e=>window.removeEventListener(e,h));},[reset]);
+  useEffect(()=>{reset();},[usuario]);
+  const login=async(u,senha)=>{
+    if(!u.ativo)return{erro:"Conta inativa."};
+    if(u.bloqueado_ate&&new Date(u.bloqueado_ate)>new Date()){const m=Math.ceil((new Date(u.bloqueado_ate)-new Date())/60000);return{erro:`Bloqueada por ${m} min.`};}
+    if(u.senha!==senha){const f=(u.tentativas_falhas||0)+1;const upd=f>=5?{bloqueado_ate:new Date(Date.now()+15*60000).toISOString(),tentativas_falhas:0}:{tentativas_falhas:f};
+      await sb.from("usuarios").eq("id",u.id).update(upd);await sb.from("auditoria").insert({usuario_id:u.id,usuario_nome:u.nome,acao:"LOGIN_FALHA",resultado:"negado"});
+      if(f>=5)return{erro:"Conta bloqueada após 5 tentativas."};return{erro:`Senha incorreta. ${5-f} tentativa(s).`};}
+    await sb.from("usuarios").eq("id",u.id).update({tentativas_falhas:0,ultimo_login:new Date().toISOString()});
+    await sb.from("auditoria").insert({usuario_id:u.id,usuario_nome:u.nome,acao:"LOGIN",resultado:"sucesso"});
+    setUsuario(u);return{ok:true};
+  };
+  const logout=async(motivo="manual")=>{if(usuario)await sb.from("auditoria").insert({usuario_id:usuario.id,usuario_nome:usuario.nome,acao:"LOGOUT",detalhes:JSON.stringify({motivo})});clearTimeout(tmr.current);clearTimeout(atm.current);setUsuario(null);setAlerta(false);};
+  const confirmar=(msg)=>new Promise(r=>setPin({msg,r}));
+  return(
+    <Ctx.Provider value={{usuario,sb,login,logout,auditar,pode:(rc,a)=>pode(usuario?.papel,rc,a),confirmar,toast}}>
+      {children}
+      {alerta&&<AlertaSessao onRenovar={()=>{setAlerta(false);reset();}} onSair={()=>logout("timeout")}/>}
+      {pin&&<ModalPin msg={pin.msg} onOk={()=>{pin.r(true);setPin(null);}} onCancel={()=>{pin.r(false);setPin(null);}}/>}
+      {toasts.map(t=><Toast key={t.id} msg={t.msg} tipo={t.tipo} onClose={()=>setToasts(p=>p.filter(x=>x.id!==t.id))}/>)}
+      <style>{FONTS}{`@keyframes pulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}`}</style>
+    </Ctx.Provider>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CONFIG
+// ═══════════════════════════════════════════════════════════════
+function TelaConfig({onConectado}){
+  const[url,setUrl]=useState("");const[key,setKey]=useState("");const[test,setTest]=useState(false);const[err,setErr]=useState("");
+  useEffect(()=>{const c=lerCfg();if(c){setUrl(c.u);setKey(c.k);}});
+  const conectar=async()=>{if(!url||!key)return;setTest(true);setErr("");
+    try{const r=await fetch(`${url}/rest/v1/usuarios?select=id&limit=1`,{headers:{apikey:key,Authorization:`Bearer ${key}`}});if(r.ok){salvarCfg(url,key);onConectado(criarSupabase(url,key));}else setErr("Credenciais inválidas.");}
+    catch{setErr("Não foi possível conectar.");}setTest(false);};
+  return(
+    <div style={{minHeight:"100vh",background:C.navy,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'EB Garamond',serif"}}>
+      <div style={{width:520,background:C.navy2,border:`1px solid ${C.border}`,borderRadius:12,padding:44,boxShadow:"0 24px 80px #000a"}}>
+        <div style={{textAlign:"center",marginBottom:30}}><LogoJAS size={70}/></div>
+        <Div red/>
+        <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:14,marginBottom:16,textAlign:"center"}}>Configuração do Banco de Dados</div>
+        <div style={{background:C.navy,border:`1px solid ${C.border}`,borderRadius:6,padding:14,marginBottom:22,fontSize:12,color:C.white2,lineHeight:1.8}}>
+          1. Acesse <strong style={{color:C.white}}>supabase.com</strong> → seu projeto<br/>
+          2. Clique em <strong style={{color:C.white}}>Project Settings → API</strong><br/>
+          3. Copie a <strong style={{color:C.white}}>Project URL</strong> e a chave <strong style={{color:C.white}}>anon public</strong>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:14,marginBottom:20}}>
+          {[["Project URL","url","https://xxxxxxxxxxxx.supabase.co",setUrl,url],["Chave Anon Public","key","eyJhbGci...",setKey,key]].map(([l,,ph,fn,val])=>(
+            <div key={l}><div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:2,marginBottom:5}}>{l}</div><input value={val} onChange={e=>fn(e.target.value.trim())} placeholder={ph} type={l.includes("Chave")?"password":"text"} style={{width:"100%",background:C.navy,border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 14px",color:C.white,fontSize:13,outline:"none",fontFamily:"'EB Garamond',serif",boxSizing:"border-box"}}/></div>
+          ))}
+        </div>
+        {err&&<div style={{color:"#e05050",fontSize:12,marginBottom:14,padding:"8px 12px",background:C.redBg,borderRadius:4,border:"1px solid #8a2020"}}>⚠ {err}</div>}
+        <button onClick={conectar} disabled={!url||!key||test} style={{width:"100%",background:url&&key?C.red:"transparent",color:C.white,border:`1px solid ${url&&key?C.red:C.border}`,borderRadius:4,padding:"13px",cursor:url&&key&&!test?"pointer":"not-allowed",fontSize:14,fontFamily:"'Playfair Display',serif",letterSpacing:1,transition:"all 0.2s"}}>
+          {test?"Conectando...":"Conectar ao Banco de Dados"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  LOGIN
+// ═══════════════════════════════════════════════════════════════
+function TelaLogin({onConfig,onGuia}){
+  const{sb,login,toast}=useSeg();const[usuarios,setUsuarios]=useState([]);const[load,setLoad]=useState(true);
+  const[sel,setSel]=useState(null);const[senha,setSenha]=useState("");const[err,setErr]=useState("");const[ent,setEnt]=useState(false);
+  useEffect(()=>{sb.from("usuarios").select("*").then(({data})=>{setUsuarios(data||[]);setLoad(false);});},[]);
+  const tentar=async()=>{if(!sel||!senha)return;setEnt(true);setErr("");const r=await login(sel,senha);if(r.erro){setErr(r.erro);setSenha("");}else toast("Bem-vindo, "+sel.nome.split(" ")[1]+"!");setEnt(false);};
+  return(
+    <div style={{minHeight:"100vh",background:C.navy,display:"flex",fontFamily:"'EB Garamond',serif"}}>
+      {/* Coluna esquerda — identidade */}
+      <div style={{width:340,background:`linear-gradient(180deg,${C.navy2} 0%,${C.blue}22 100%)`,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:40,gap:20}}>
+        <LogoJAS size={100}/>
+        <Div red my={4}/>
+        <div style={{textAlign:"center",color:C.white2,fontSize:12,lineHeight:2.2,letterSpacing:0.5}}>
+          Ética · Competência<br/>Comprometimento · Transparência
+        </div>
+        <Div my={4}/>
+        {[["🔐","Autenticação segura"],["🛡","Controle por perfil"],["⏱","Sessão 30 min"],["📋","Auditoria completa"]].map(([i,l])=>(
+          <div key={l} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
+            <span style={{fontSize:14}}>{i}</span><span style={{color:C.white2,fontSize:12}}>{l}</span>
+          </div>
+        ))}
+        <button onClick={onGuia} style={{marginTop:"auto",background:"transparent",border:`1px solid ${C.border}`,color:C.muted,borderRadius:4,padding:"7px 16px",cursor:"pointer",fontSize:11,fontFamily:"'EB Garamond',serif",width:"100%"}}>📲 Guia de Instalação</button>
+        <div style={{textAlign:"center",color:C.muted,fontSize:10,letterSpacing:1}}>© JUVENAL ANTONIO DA SILVA<br/>ADVOGADOS ASSOCIADOS</div>
+      </div>
+      {/* Coluna direita — formulário */}
+      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:40}}>
+        <div style={{width:420}}>
+          <div style={{marginBottom:28}}>
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:26,color:C.white,marginBottom:6}}>Acesso ao Sistema</div>
+            <div style={{color:C.muted,fontSize:14}}>Selecione seu perfil e informe a senha para acessar.</div>
+          </div>
+          {load?<Spin txt="Carregando perfis..."/>:<>
+            <div style={{marginBottom:18}}>
+              <div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:2,marginBottom:10}}>Perfil de Acesso</div>
+              {usuarios.map(u=>(
+                <div key={u.id} onClick={()=>{setSel(u);setErr("");setSenha("");}} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:sel?.id===u.id?C.navy3:C.navy2,border:`1px solid ${sel?.id===u.id?C.red:C.border}`,borderRadius:6,cursor:"pointer",marginBottom:6,transition:"all 0.15s",boxShadow:sel?.id===u.id?`0 2px 12px ${C.red}22`:"none"}}>
+                  <Av u={u} sz={36}/><div style={{flex:1}}><div style={{color:C.white,fontSize:14}}>{u.nome}</div><PBadge papel={u.papel}/></div>
+                  {sel?.id===u.id&&<span style={{color:C.red,fontSize:18}}>✓</span>}
+                </div>
+              ))}
+            </div>
+            {sel&&<div style={{marginBottom:16}}>
+              <div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:2,marginBottom:5}}>Senha</div>
+              <input type="password" value={senha} onChange={e=>{setSenha(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&tentar()} placeholder="••••••••" style={{width:"100%",background:C.navy,border:`1px solid ${err?"#8a2020":C.border}`,borderRadius:4,padding:"10px 14px",color:C.white,fontSize:14,outline:"none",fontFamily:"'EB Garamond',serif",boxSizing:"border-box"}}/>
+              {err&&<div style={{color:"#e05050",fontSize:12,marginTop:6}}>⚠ {err}</div>}
+            </div>}
+            <button onClick={tentar} disabled={!sel||!senha||ent} style={{width:"100%",background:sel&&senha?C.red:"transparent",color:C.white,border:`1px solid ${sel&&senha?C.red:C.border}`,borderRadius:4,padding:"13px",cursor:sel&&senha&&!ent?"pointer":"not-allowed",fontSize:14,fontFamily:"'Playfair Display',serif",letterSpacing:1,transition:"all 0.2s"}}>
+              {ent?"Verificando...":"ACESSAR O SISTEMA"}
+            </button>
+            <button onClick={onConfig} style={{display:"block",margin:"12px auto 0",background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",fontFamily:"'EB Garamond',serif",textDecoration:"underline"}}>⚙ Configurações do banco</button>
+          </>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DETALHE DO PROCESSO
+// ═══════════════════════════════════════════════════════════════
+function ProcDetalhe({proc0,onBack,processos}){
+  const{sb,usuario,pode,auditar,confirmar,toast}=useSeg();
+  const[tab,setTab]=useState("resumo");const[and,setAnd]=useState([]);const[notas,setNotas]=useState([]);const[arqs,setArqs]=useState([]);const[load,setLoad]=useState(true);
+  const[nota,setNota]=useState("");const[arqN,setArqN]=useState("");const[arqT,setArqT]=useState("peticao");const[mIA,setMIA]=useState(null);
+  const carregar=useCallback(async()=>{const[a,n,ar]=await Promise.all([sb.from("andamentos").eq("processo_id",proc0.id).order("data",{ascending:false}).select(),sb.from("notas").eq("processo_id",proc0.id).order("criado_em",{ascending:false}).select(),sb.from("arquivos").eq("processo_id",proc0.id).order("criado_em",{ascending:false}).select()]);setAnd(a.data||[]);setNotas(n.data||[]);setArqs(ar.data||[]);setLoad(false);},[proc0.id]);
+  useEffect(()=>{carregar();},[carregar]);
+  const addNota=async()=>{if(!pode("notas","c")){toast("Sem permissão.","erro");return;}if(!nota.trim())return;await sb.from("notas").insert({processo_id:proc0.id,texto:nota,autor:usuario.nome,cor:PAPEL_COR[usuario.papel]||C.red});await auditar("CRIAR_NOTA","processo:"+proc0.id);toast("Nota salva.");setNota("");carregar();};
+  const delNota=async(n)=>{if(!pode("notas","x")&&n.autor!==usuario.nome){toast("Sem permissão.","erro");return;}const ok=await confirmar(`Excluir nota de "${n.autor}"?`);if(!ok)return;await sb.from("notas").eq("id",n.id).delete();toast("Nota excluída.");carregar();};
+  const addArq=async()=>{if(!pode("arquivos","c")){toast("Sem permissão.","erro");return;}if(!arqN.trim())return;await sb.from("arquivos").insert({processo_id:proc0.id,nome:arqN,tipo:arqT,autor:usuario.nome});await auditar("REGISTRAR_ARQUIVO","processo:"+proc0.id);toast("Arquivo registrado.");setArqN("");carregar();};
+  const TABS=[["resumo","Resumo"],["notas","Notas"],["arquivos","Arquivos"],...(pode("ia","l")?[["ia","Assist. IA"]]:[] ),...(pode("drive","l")?[["drive","Google Drive"]]:[] )];
+  const pF={...proc0,andamentos:and,notas,arquivos:arqs};
+  return(
+    <div>
+      {mIA&&<ModalIA proc={pF} tipo={mIA} onClose={()=>setMIA(null)}/>}
+      <div style={{marginBottom:18}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontFamily:"'EB Garamond',serif",fontSize:13,marginBottom:10,display:"flex",alignItems:"center",gap:6}}>← Voltar à lista</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div><div style={{fontFamily:"'Playfair Display',serif",fontSize:22,color:C.white,marginBottom:2}}>{proc0.cliente}</div><div style={{color:C.white2,fontSize:13}}>vs {proc0.adverso}</div><div style={{color:C.muted,fontSize:11,marginTop:3,letterSpacing:0.5}}>{proc0.id}</div></div>
+          <SBadge status={proc0.status} lg/>
+        </div>
+        <Div red my={14}/>
+      </div>
+      <div style={{display:"flex",gap:0,marginBottom:20,borderBottom:`1px solid ${C.border}`}}>
+        {TABS.map(([v,l])=>(
+          <button key={v} onClick={()=>setTab(v)} style={{background:"transparent",color:tab===v?C.red:C.white2,border:"none",borderBottom:tab===v?`2px solid ${C.red}`:"2px solid transparent",padding:"8px 16px",cursor:"pointer",fontSize:13,fontFamily:"'EB Garamond',serif",letterSpacing:0.5,marginBottom:-1}}>
+            {l}{v==="notas"&&notas.length>0&&<span style={{background:C.red+"33",color:C.red,borderRadius:10,padding:"1px 6px",fontSize:9,marginLeft:5,border:`1px solid ${C.red}44`}}>{notas.length}</span>}
+          </button>
+        ))}
+      </div>
+      {load?<Spin/>:<>
+        {tab==="resumo"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <Card>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16,marginBottom:14}}>
+                {[["Parte Adversa",proc0.adverso],["Responsável",proc0.responsavel],["Valor",proc0.valor],["Vara",proc0.vara],["Tribunal",proc0.tribunal],["Fase",proc0.fase],["Distribuição",fmtBR(proc0.data_distribuicao)],["Próx. Prazo",fmtBR(proc0.proximo_andamento)],["Tipo",proc0.tipo]].map(([l,v])=>(
+                  <div key={l}><div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:1.5,marginBottom:3}}>{l}</div><div style={{color:C.white,fontSize:13,fontFamily:"'EB Garamond',serif"}}>{v||"—"}</div></div>
+                ))}
+              </div>
+              {proc0.descricao&&<><Div my={10}/><div style={{color:C.white2,fontSize:13,lineHeight:1.8,borderLeft:`3px solid ${C.red}`,paddingLeft:14,fontFamily:"'EB Garamond',serif",fontStyle:"italic"}}>{proc0.descricao}</div></>}
+            </Card>
+            <Card>
+              <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:14,marginBottom:12}}>Andamentos</div>
+              {and.length===0&&<div style={{color:C.muted,fontSize:13,textAlign:"center",padding:18}}>Nenhum andamento registrado.</div>}
+              {and.map((a,i)=><div key={a.id} style={{display:"flex",gap:12,paddingBottom:10,marginBottom:10,borderBottom:i<and.length-1?`1px solid ${C.border}`:"none"}}><div style={{fontSize:17}}>{TIPO_ICO[a.tipo]||"📝"}</div><div><div style={{color:C.white,fontSize:13}}>{a.descricao}</div><div style={{color:C.muted,fontSize:10,marginTop:2}}>{fmtBR(a.data)} · {a.autor}</div></div></div>)}
+            </Card>
+          </div>
+        )}
+        {tab==="notas"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {pode("notas","c")&&<Card><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}><Av u={usuario} sz={24}/><span style={{color:C.muted,fontSize:12}}>{usuario.nome}</span></div><textarea value={nota} onChange={e=>setNota(e.target.value)} placeholder="Observações, alertas estratégicos, informações relevantes..." rows={3} style={{width:"100%",background:C.navy,border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 12px",color:C.white,fontSize:13,outline:"none",fontFamily:"'EB Garamond',serif",resize:"none",boxSizing:"border-box"}}/><div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}><Btn onClick={addNota} disabled={!nota.trim()} v="r">Adicionar Nota</Btn></div></Card>}
+            {notas.map(n=>{const uu={avatar:n.autor.split(" ").map(w=>w[0]).slice(0,2).join(""),cor:n.cor||C.red};return<div key={n.id} style={{background:C.navy2,border:`1px solid ${C.border}`,borderLeft:`4px solid ${n.cor||C.red}`,borderRadius:8,padding:16}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}><Av u={uu} sz={24}/><div><div style={{color:C.white,fontSize:12}}>{n.autor}</div><div style={{color:C.muted,fontSize:10}}>{fmt(n.criado_em)}</div></div></div>{(n.autor===usuario.nome||pode("notas","x"))&&<button onClick={()=>delNota(n)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer"}}>🗑</button>}</div><div style={{color:C.white2,fontSize:13,lineHeight:1.7,fontFamily:"'EB Garamond',serif"}}>{n.texto}</div></div>;})}
+          </div>
+        )}
+        {tab==="arquivos"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {pode("arquivos","c")&&<Card><div style={{display:"flex",gap:8}}><input value={arqN} onChange={e=>setArqN(e.target.value)} placeholder="Nome do arquivo..." style={{flex:1,background:C.navy,border:`1px solid ${C.border}`,borderRadius:4,padding:"9px 12px",color:C.white,fontSize:13,outline:"none",fontFamily:"'EB Garamond',serif"}}/><select value={arqT} onChange={e=>setArqT(e.target.value)} style={{background:C.navy,border:`1px solid ${C.border}`,borderRadius:4,padding:"9px 10px",color:C.white,fontSize:12,outline:"none",fontFamily:"'EB Garamond',serif"}}><option value="peticao">Petição</option><option value="laudo">Laudo</option><option value="documento">Documento</option><option value="planilha">Planilha</option></select><Btn onClick={addArq} disabled={!arqN.trim()} v="r">Registrar</Btn></div></Card>}
+            <Card>{arqs.map(a=><div key={a.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:`1px solid ${C.border}`}}><span style={{fontSize:20}}>{ARQ_ICO[a.tipo]||"📄"}</span><div style={{flex:1}}><div style={{color:C.white,fontSize:13}}>{a.nome}</div><div style={{color:C.muted,fontSize:10,marginTop:1}}>{fmt(a.criado_em)} · {a.autor}</div></div><span style={{background:C.blue+"33",color:"#5bc0de",borderRadius:4,padding:"2px 8px",fontSize:9,textTransform:"uppercase"}}>{a.tipo}</span></div>)}</Card>
+          </div>
+        )}
+        {tab==="ia"&&pode("ia","l")&&<div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
+          {[{t:"sinopse",i:"📋",l:"Sinopse Executiva",d:"Resumo profissional do caso."},{t:"historico",i:"📜",l:"Histórico Cronológico",d:"Narrativa completa dos marcos."},{t:"passos",i:"🎯",l:"Próximos Passos",d:"Estratégias e petições sugeridas."}].map(({t,i,l,d})=>(
+            <Card key={t} onClick={()=>setMIA(t)} red><div style={{fontSize:30,marginBottom:8}}>{i}</div><div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:14,marginBottom:5}}>{l}</div><div style={{color:C.white2,fontSize:11,lineHeight:1.6}}>{d}</div><div style={{marginTop:10,color:C.red,fontSize:11}}>Gerar →</div></Card>
+          ))}
+        </div>}
+        {tab==="drive"&&pode("drive","l")&&<GoogleDriveModule processos={processos}/>}
+      </>}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  APP PRINCIPAL
+// ═══════════════════════════════════════════════════════════════
+function AppPrincipal({onConfig,onGuia}){
+  const{usuario,logout,pode,auditar,toast,sb,confirmar}=useSeg();
+  const[procs,setProcs]=useState([]);const[load,setLoad]=useState(true);
+  const[view,setView]=useState("dashboard");const[sel,setSel]=useState(null);
+  const[busca,setBusca]=useState("");const[filtS,setFiltS]=useState("Todos");
+  const[showForm,setShowForm]=useState(false);
+  const[form,setForm]=useState({id:"",cliente:"",adverso:"",tipo:"Cível",area:"",status:"Em andamento",fase:"",vara:"",tribunal:"",data_distribuicao:"",proximo_andamento:"",descricao:"",responsavel:"",valor:""});
+
+  const carregar=useCallback(async()=>{const{data}=await sb.from("processos").order("atualizado_em",{ascending:false}).select();setProcs(data||[]);setLoad(false);},[]);
+  useEffect(()=>{carregar();},[carregar]);
+  const salvar=async()=>{if(!form.id||!form.cliente)return;const{error}=await sb.from("processos").insert(form);if(!error){await auditar("CRIAR_PROCESSO","processo:"+form.id,{cliente:form.cliente});toast("Processo cadastrado!");await carregar();setShowForm(false);setForm({id:"",cliente:"",adverso:"",tipo:"Cível",area:"",status:"Em andamento",fase:"",vara:"",tribunal:"",data_distribuicao:"",proximo_andamento:"",descricao:"",responsavel:"",valor:""});}};
+
+  const fil=procs.filter(p=>{const s=busca.toLowerCase();return(s===""||p.cliente?.toLowerCase().includes(s)||p.id.includes(s)||p.adverso?.toLowerCase().includes(s))&&(filtS==="Todos"||p.status===filtS);});
+  const stats={total:procs.length,and:procs.filter(p=>p.status==="Em andamento").length,urg:procs.filter(p=>p.status==="Urgente").length,ok:procs.filter(p=>p.status==="Concluído").length};
+
+  const nav=[
+    {v:"dashboard",ic:"⊞",lb:"Dashboard"},
+    {v:"processos",ic:"⚖",lb:"Processos"},
+    {v:"juris",ic:"🔍",lb:"Jurisprudência",badge:"IA"},
+    {v:"diario",ic:"📰",lb:"Diário Oficial"},
+    {v:"agenda",ic:"◷",lb:"Agenda"},
+    ...(pode("auditoria","l")?[{v:"auditoria",ic:"◈",lb:"Auditoria"}]:[]),
+    ...(pode("usuarios","l")?[{v:"usuarios",ic:"◉",lb:"Equipe"}]:[]),
+  ];
+
+  return(
+    <div style={{minHeight:"100vh",background:C.navy,display:"flex",fontFamily:"'EB Garamond',serif"}}>
+      {/* SIDEBAR */}
+      <div style={{width:235,background:C.navy2,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",minHeight:"100vh",flexShrink:0}}>
+        <div style={{padding:"22px 18px 16px",borderBottom:`1px solid ${C.border}`}}><LogoJAS size={46} modo="horizontal"/></div>
+        <div style={{padding:"12px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:10}}>
+          <Av u={usuario} sz={30}/>
+          <div style={{flex:1,overflow:"hidden"}}><div style={{color:C.white,fontSize:12,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{usuario.nome}</div><PBadge papel={usuario.papel}/></div>
+        </div>
+        <nav style={{flex:1,padding:"10px 0"}}>
+          {nav.map(({v,ic,lb,badge})=>(
+            <button key={v} onClick={()=>{setView(v);setSel(null);}} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"10px 18px",background:view===v?C.red+"22":"transparent",border:"none",borderLeft:view===v?`3px solid ${C.red}`:"3px solid transparent",color:view===v?C.white:C.white2,cursor:"pointer",fontSize:13,fontFamily:"'EB Garamond',serif",textAlign:"left",transition:"all 0.15s"}}>
+              <span style={{fontSize:15,minWidth:20,textAlign:"center"}}>{ic}</span>
+              <span style={{flex:1}}>{lb}</span>
+              {badge&&<span style={{background:C.red,color:C.white,borderRadius:4,padding:"1px 5px",fontSize:8,fontWeight:"bold"}}>{badge}</span>}
+            </button>
+          ))}
+        </nav>
+        <div style={{padding:"12px 18px",borderTop:`1px solid ${C.border}`}}>
+          <button onClick={onGuia} style={{width:"100%",background:"transparent",border:`1px solid ${C.border}`,color:C.muted,borderRadius:4,padding:"6px",cursor:"pointer",fontSize:10,marginBottom:6}}>📲 Guia de Instalação</button>
+          <button onClick={()=>logout()} style={{width:"100%",background:"transparent",border:`1px solid ${C.border}`,color:C.muted,borderRadius:4,padding:"6px",cursor:"pointer",fontSize:10}}>Encerrar Sessão 🔓</button>
+        </div>
+      </div>
+
+      {/* CONTEÚDO */}
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        <div style={{background:C.navy2,borderBottom:`1px solid ${C.border}`,padding:"10px 24px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:15}}>{nav.find(n=>n.v===view)?.lb||"Dashboard"}</div>
+          <div style={{display:"flex",gap:12,alignItems:"center"}}>
+            <div style={{color:C.muted,fontSize:11}}>{new Date().toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
+            {pode("processos","c")&&view==="processos"&&!sel&&<Btn onClick={()=>setShowForm(true)} v="r">+ Novo Processo</Btn>}
+          </div>
+        </div>
+
+        <div style={{flex:1,overflowY:"auto",padding:24}}>
+          {/* DASHBOARD */}
+          {view==="dashboard"&&(
+            <div>
+              <div style={{marginBottom:20}}>
+                <div style={{fontFamily:"'Playfair Display',serif",fontSize:24,color:C.white,marginBottom:4}}>Bom dia, {usuario.nome.split(" ")[1]||usuario.nome.split(" ")[0]}.</div>
+                <div style={{color:C.muted,fontSize:13}}>Resumo operacional do escritório.</div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:10,background:C.navy2,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 16px",marginBottom:18}}>
+                <div style={{width:8,height:8,borderRadius:"50%",background:"#40c080"}}/>
+                <span style={{color:C.white2,fontSize:11}}>Sessão segura</span>
+                <span style={{color:C.border}}>|</span><span style={{color:C.muted,fontSize:11}}>{PAPEL_LABEL[usuario.papel]}</span>
+                <span style={{color:C.border}}>|</span><span style={{color:C.muted,fontSize:11}}>Timeout: 30 min</span>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:18}}>
+                {[{l:"Total",v:stats.total,ic:"⚖",c:C.blue},{l:"Em Andamento",v:stats.and,ic:"▶",c:"#5bc0de"},{l:"Urgentes",v:stats.urg,ic:"⚑",c:"#e05050"},{l:"Concluídos",v:stats.ok,ic:"✓",c:"#40c080"}].map(({l,v,ic,c})=>(
+                  <Card key={l}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div><div style={{fontFamily:"'Playfair Display',serif",fontSize:28,fontWeight:700,color:c}}>{v}</div><div style={{color:C.white2,fontSize:12,marginTop:2}}>{l}</div></div><span style={{fontSize:22,color:c,opacity:0.4}}>{ic}</span></div></Card>
+                ))}
+              </div>
+              <Card>
+                <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:14,marginBottom:4}}>Próximos Prazos</div>
+                <Div red my={10}/>
+                {procs.filter(p=>p.proximo_andamento).sort((a,b)=>a.proximo_andamento.localeCompare(b.proximo_andamento)).slice(0,6).map((p,i,arr)=>(
+                  <div key={p.id} onClick={()=>{setSel(p);setView("processos");}} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:i<arr.length-1?`1px solid ${C.border}`:"none",cursor:"pointer",transition:"opacity 0.15s"}} onMouseEnter={e=>e.currentTarget.style.opacity="0.7"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
+                    <div><div style={{color:C.white,fontSize:13}}>{p.cliente}</div><div style={{color:C.muted,fontSize:11,marginTop:2}}>{p.fase} · {p.responsavel}</div></div>
+                    <div style={{display:"flex",gap:12,alignItems:"center"}}><SBadge status={p.status}/><span style={{color:C.red,fontSize:12,fontFamily:"'Playfair Display',serif"}}>{fmtBR(p.proximo_andamento)}</span></div>
+                  </div>
+                ))}
+              </Card>
+            </div>
+          )}
+
+          {/* PROCESSOS */}
+          {view==="processos"&&!sel&&(
+            <div>
+              <div style={{display:"flex",gap:10,marginBottom:16}}>
+                <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Buscar por cliente, número ou parte adversa..." style={{flex:1,background:C.navy2,border:`1px solid ${C.border}`,borderRadius:4,padding:"9px 14px",color:C.white,fontSize:13,outline:"none",fontFamily:"'EB Garamond',serif"}} onFocus={e=>e.target.style.borderColor=C.red} onBlur={e=>e.target.style.borderColor=C.border}/>
+                <select value={filtS} onChange={e=>setFiltS(e.target.value)} style={{background:C.navy2,border:`1px solid ${C.border}`,borderRadius:4,padding:"9px 14px",color:C.white,fontSize:13,outline:"none",fontFamily:"'EB Garamond',serif"}}>
+                  {["Todos","Em andamento","Aguardando","Urgente","Concluído"].map(s=><option key={s}>{s}</option>)}
+                </select>
+              </div>
+              {load?<Spin/>:<div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {fil.map(p=>(
+                  <div key={p.id} onClick={()=>{setSel(p);auditar("VER_PROCESSO","processo:"+p.id);}} style={{background:C.navy2,border:`1px solid ${C.border}`,borderRadius:6,padding:"13px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",transition:"all 0.15s"}}
+                    onMouseEnter={e=>{e.currentTarget.style.borderColor=C.red;e.currentTarget.style.boxShadow=`0 2px 12px ${C.red}18`;}}
+                    onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.boxShadow="none";}}>
+                    <div style={{flex:1}}><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}><span style={{color:C.white,fontFamily:"'Playfair Display',serif",fontSize:14}}>{p.cliente}</span><span style={{color:C.muted,fontSize:12}}>vs {p.adverso}</span></div><div style={{fontSize:10,color:C.muted,letterSpacing:0.5}}>{p.id} · {p.area} · {p.vara}</div></div>
+                    <div style={{display:"flex",gap:10,alignItems:"center"}}><span style={{fontSize:12,color:C.white2}}>{p.responsavel}</span><span style={{fontSize:13,color:C.red,fontFamily:"'Playfair Display',serif"}}>{p.valor}</span><SBadge status={p.status}/></div>
+                  </div>
+                ))}
+                {fil.length===0&&<div style={{textAlign:"center",color:C.muted,padding:40}}>Nenhum processo encontrado.</div>}
+              </div>}
+            </div>
+          )}
+          {view==="processos"&&sel&&<ProcDetalhe proc0={sel} onBack={()=>setSel(null)} processos={procs}/>}
+
+          {/* JURISPRUDÊNCIA */}
+          {view==="juris"&&<JurisIA/>}
+
+          {/* DIÁRIO OFICIAL */}
+          {view==="diario"&&<DiarioOficial/>}
+
+          {/* AGENDA */}
+          {view==="agenda"&&(
+            <div>
+              {procs.filter(p=>p.proximo_andamento).sort((a,b)=>a.proximo_andamento.localeCompare(b.proximo_andamento)).map(p=>{
+                const[,m,d]=p.proximo_andamento.slice(0,10).split("-");
+                return<div key={p.id} onClick={()=>{setSel(p);setView("processos");}} style={{background:C.navy2,border:`1px solid ${C.border}`,borderRadius:6,padding:"12px 16px",display:"flex",alignItems:"center",gap:16,marginBottom:6,cursor:"pointer",transition:"all 0.15s"}} onMouseEnter={e=>e.currentTarget.style.borderColor=C.red} onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                  <div style={{textAlign:"center",background:C.navy,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 14px",minWidth:50}}><div style={{fontFamily:"'Playfair Display',serif",color:C.red,fontSize:20,fontWeight:700}}>{d}</div><div style={{color:C.muted,fontSize:9,textTransform:"uppercase",letterSpacing:1}}>{MESES[+m-1]}</div></div>
+                  <div style={{flex:1}}><div style={{color:C.white,fontFamily:"'Playfair Display',serif",fontSize:14}}>{p.cliente}</div><div style={{color:C.muted,fontSize:11,marginTop:2}}>{p.id} · {p.fase}</div></div>
+                  <SBadge status={p.status}/>
+                </div>;
+              })}
+            </div>
+          )}
+
+          {view==="auditoria"&&<AuditoriaView/>}
+          {view==="usuarios"&&<EquipeView/>}
+
+          {/* MODAL NOVO PROCESSO */}
+          {showForm&&(
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}>
+              <div style={{background:C.navy2,border:`1px solid ${C.red}`,borderRadius:12,padding:32,width:620,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 24px 80px #000"}}>
+                <div style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:18,marginBottom:16}}>Cadastrar Novo Processo</div>
+                <Div red my={0}/>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:14}}>
+                  {[["Número do Processo *","id"],["Cliente *","cliente"],["Parte Adversa","adverso"],["Advogado Responsável","responsavel"],["Área Jurídica","area"],["Fase Processual","fase"],["Vara / Juízo","vara"],["Tribunal","tribunal"],["Valor da Causa","valor"]].map(([l,k])=>(
+                    <div key={k}><div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:1.5,marginBottom:4}}>{l}</div><input value={form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} style={{width:"100%",background:C.navy,border:`1px solid ${C.border}`,borderRadius:4,padding:"8px 12px",color:C.white,fontSize:13,outline:"none",fontFamily:"'EB Garamond',serif",boxSizing:"border-box"}}/></div>
+                  ))}
+                  {[["Data Distribuição","data_distribuicao"],["Próximo Prazo","proximo_andamento"]].map(([l,k])=>(
+                    <div key={k}><div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:1.5,marginBottom:4}}>{l}</div><input type="date" value={form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} style={{width:"100%",background:C.navy,border:`1px solid ${C.border}`,borderRadius:4,padding:"8px 12px",color:C.white,fontSize:13,outline:"none",fontFamily:"'EB Garamond',serif",boxSizing:"border-box"}}/></div>
+                  ))}
+                </div>
+                <div style={{marginTop:12}}><div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:1.5,marginBottom:4}}>Descrição / Objeto</div><textarea value={form.descricao} onChange={e=>setForm(f=>({...f,descricao:e.target.value}))} rows={3} style={{width:"100%",background:C.navy,border:`1px solid ${C.border}`,borderRadius:4,padding:"8px 12px",color:C.white,fontSize:13,outline:"none",fontFamily:"'EB Garamond',serif",resize:"none",boxSizing:"border-box"}}/></div>
+                <div style={{display:"flex",gap:8,marginTop:16,justifyContent:"flex-end"}}><Btn onClick={()=>setShowForm(false)} v="g">Cancelar</Btn><Btn onClick={salvar} v="r" disabled={!form.id||!form.cliente}>Cadastrar</Btn></div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── JURISPRUDÊNCIA IA ─────────────────────────────────────────
+function JurisIA(){
+  const{usuario,auditar,sb}=useSeg();const[q,setQ]=useState("");const[msgs,setMsgs]=useState([{role:"assistant",content:`Olá! Sou o assistente jurídico do escritório Juvenal Antonio da Silva.\n\nPesquise jurisprudência do STJ, STF, TST e TJs em linguagem natural.\n\nExemplos:\n• "Tema 1365 — dano moral plano de saúde 2026"\n• "Rescisão indireta do contrato de trabalho"\n• "Juros abusivos contratos bancários"`}]);const[load,setLoad]=useState(false);const[salvas,setSalvas]=useState([]);const[tj,setTj]=useState("chat");const bot=useRef(null);
+  useEffect(()=>{bot.current?.scrollIntoView({behavior:"smooth"});},[msgs,load]);
+  useEffect(()=>{sb.from("jurisprudencias").eq("salvo_por",usuario.nome).order("criado_em",{ascending:false}).select().then(({data})=>setSalvas(data||[]));},[]);
+  const send=async(txt)=>{const t=txt||q;if(!t.trim())return;setQ("");const h=[...msgs,{role:"user",content:t}];setMsgs(h);setLoad(true);
+    try{const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:"Você é assistente jurídico do escritório Juvenal Antonio da Silva Advogados Associados. Especializado em jurisprudência brasileira (STJ, STF, TST, TJs). Cite processos, temas repetitivos e súmulas. Explique impacto prático. Português jurídico.",messages:h.map(m=>({role:m.role,content:m.content}))})});const d=await r.json();setMsgs(prev=>[...prev,{role:"assistant",content:d.content?.map(b=>b.text||"").join("")||"—"}]);await auditar("PESQUISA_JURIS",null,{query:t});}
+    catch{setMsgs(prev=>[...prev,{role:"assistant",content:"⚠ Erro de conexão."}]);}setLoad(false);};
+  const salvar=async(m)=>{const{data}=await sb.from("jurisprudencias").insert({tribunal:"STJ/STF",tema:"Consulta",ementa:m.content.slice(0,200)+"...",area:"Pesquisa IA",salvo_por:usuario.nome}).single();if(data)setSalvas(p=>[data,...p]);};
+  return(
+    <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 130px)"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <div><div style={{fontFamily:"'Playfair Display',serif",fontSize:20,color:C.white}}>Pesquisa de Jurisprudência</div><div style={{color:C.muted,fontSize:12,marginTop:3}}>STJ · STF · TST · TJs — Assistente IA</div></div>
+        <div style={{display:"flex",gap:6}}>{[["chat","Pesquisar"],["salvas","Salvas"]].map(([v,l])=><button key={v} onClick={()=>setTj(v)} style={{background:tj===v?C.red+"33":"transparent",color:tj===v?C.red:C.white2,border:`1px solid ${tj===v?C.red:C.border}`,borderRadius:4,padding:"6px 14px",cursor:"pointer",fontSize:12,fontFamily:"'EB Garamond',serif"}}>{l}</button>)}</div>
+      </div>
+      {tj==="chat"&&(<>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+          {["Tema 1365 STJ","Rescisão indireta CLT","Juros abusivos","Cobertura TEA"].map((s,i)=><button key={i} onClick={()=>send(s)} style={{background:C.navy2,border:`1px solid ${C.border}`,color:C.white2,borderRadius:20,padding:"4px 12px",fontSize:11,cursor:"pointer",fontFamily:"'EB Garamond',serif"}}>{s}</button>)}
+        </div>
+        <div style={{flex:1,overflowY:"auto",background:C.navy,border:`1px solid ${C.border}`,borderRadius:"8px 8px 0 0",padding:18}}>
+          {msgs.map((m,i)=><div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start",marginBottom:12,gap:8}}>{m.role==="assistant"&&<div style={{width:28,height:28,borderRadius:"50%",background:C.blue,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,flexShrink:0,marginTop:2,color:C.white,fontFamily:"'Great Vibes',cursive"}}>J</div>}<div style={{maxWidth:"78%",background:m.role==="user"?C.navy3:C.navy2,border:`1px solid ${m.role==="user"?C.border:C.borderR}`,borderRadius:m.role==="user"?"14px 14px 4px 14px":"14px 14px 14px 4px",padding:"11px 14px"}}><div style={{color:m.role==="user"?C.white2:C.white,fontSize:13,lineHeight:1.8,whiteSpace:"pre-wrap",fontFamily:"'EB Garamond',serif"}}>{m.content}</div>{m.role==="assistant"&&i>0&&<button onClick={()=>salvar(m)} style={{marginTop:6,background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11}}>Salvar</button>}</div></div>)}
+          {load&&<div style={{display:"flex",gap:8}}><div style={{width:28,height:28,borderRadius:"50%",background:C.blue,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:C.white,fontFamily:"'Great Vibes',cursive"}}>J</div><div style={{background:C.navy2,border:`1px solid ${C.borderR}`,borderRadius:"14px 14px 14px 4px",padding:"10px 18px",display:"flex",gap:5,alignItems:"center"}}>{[0,1,2].map(j=><div key={j} style={{width:7,height:7,borderRadius:"50%",background:C.red,animation:"pulse 1.2s ease-in-out infinite",animationDelay:`${j*.2}s`}}/>)}</div></div>}
+          <div ref={bot}/>
+        </div>
+        <div style={{display:"flex",border:`1px solid ${C.border}`,borderTop:"none",borderRadius:"0 0 8px 8px",overflow:"hidden",background:C.navy2}}>
+          <input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder="Pesquise jurisprudência..." style={{flex:1,background:"transparent",border:"none",padding:"12px 16px",color:C.white,fontSize:13,outline:"none",fontFamily:"'EB Garamond',serif"}}/>
+          <button onClick={()=>send()} disabled={load||!q.trim()} style={{background:load||!q.trim()?"transparent":C.red,border:"none",borderLeft:`1px solid ${C.border}`,color:C.white,padding:"12px 20px",cursor:"pointer",fontSize:18,transition:"all 0.2s"}}>➤</button>
+        </div>
+      </>)}
+      {tj==="salvas"&&<div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:10}}>
+        {salvas.length===0&&<div style={{textAlign:"center",color:C.muted,padding:40}}>Nenhuma jurisprudência salva.</div>}
+        {salvas.map(j=><Card key={j.id}><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontFamily:"'Playfair Display',serif",color:C.white,fontSize:13}}>{j.tema}</span><button onClick={async()=>{await sb.from("jurisprudencias").eq("id",j.id).delete();setSalvas(p=>p.filter(x=>x.id!==j.id));}} style={{background:"none",border:"none",cursor:"pointer",color:C.muted}}>🗑</button></div><div style={{color:C.white2,fontSize:12,lineHeight:1.7,borderLeft:`3px solid ${C.red}`,paddingLeft:10,fontFamily:"'EB Garamond',serif",fontStyle:"italic"}}>{j.ementa}</div></Card>)}
+      </div>}
+    </div>
+  );
+}
+
+// ─── AUDITORIA ─────────────────────────────────────────────────
+function AuditoriaView(){
+  const{pode,sb}=useSeg();const[logs,setLogs]=useState([]);const[ld,setLd]=useState(true);const[f,setF]=useState("");
+  useEffect(()=>{sb.from("auditoria").order("criado_em",{ascending:false}).limit(200).select().then(({data})=>{setLogs(data||[]);setLd(false);});},[]);
+  if(!pode("auditoria","l"))return<div style={{textAlign:"center",padding:60}}><div style={{fontSize:44}}>🚫</div><div style={{color:"#e05050",marginTop:14,fontFamily:"'Playfair Display',serif"}}>Acesso Restrito</div></div>;
+  const AC={LOGIN:{c:"#40c080",bg:C.greenBg},LOGOUT:{c:"#5bc0de",bg:C.navy3},LOGIN_FALHA:{c:"#e05050",bg:C.redBg},CRIAR_PROCESSO:{c:C.red,bg:C.redBg+"44"},BUSCA_DIARIO_OFICIAL:{c:C.amber,bg:C.amberBg}};
+  const fil=logs.filter(l=>f===""||l.acao?.includes(f.toUpperCase())||l.usuario_nome?.toLowerCase().includes(f.toLowerCase()));
+  return<div>
+    <div style={{color:C.muted,fontSize:12,marginBottom:14}}>Registro imutável de todas as ações do sistema.</div>
+    <input value={f} onChange={e=>setF(e.target.value)} placeholder="Filtrar por usuário ou ação..." style={{width:"100%",background:C.navy2,border:`1px solid ${C.border}`,borderRadius:4,padding:"9px 14px",color:C.white,fontSize:13,outline:"none",fontFamily:"'EB Garamond',serif",boxSizing:"border-box",marginBottom:12}}/>
+    {ld?<Spin/>:<div style={{display:"flex",flexDirection:"column",gap:5}}>
+      {fil.slice(0,80).map(l=>{const ac=AC[l.acao]||{c:C.muted,bg:C.navy2};return<div key={l.id} style={{background:C.navy2,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 14px",display:"flex",alignItems:"center",gap:10}}>
+        <span style={{background:ac.bg,color:ac.c,border:`1px solid ${ac.c}33`,borderRadius:4,padding:"2px 8px",fontSize:9,whiteSpace:"nowrap",minWidth:140,textAlign:"center"}}>{l.acao}</span>
+        <span style={{flex:1,color:C.white,fontSize:12}}>{l.usuario_nome}{l.recurso&&<span style={{color:C.muted}}> → {l.recurso}</span>}</span>
+        <span style={{color:l.resultado==="sucesso"?"#40c080":"#e05050",fontSize:10}}>{l.resultado}</span>
+        <span style={{color:C.muted,fontSize:10,whiteSpace:"nowrap"}}>{l.criado_em?new Date(l.criado_em).toLocaleString("pt-BR"):"—"}</span>
+      </div>;})}
+    </div>}
+  </div>;
+}
+
+// ─── EQUIPE ────────────────────────────────────────────────────
+function EquipeView(){
+  const{sb,usuario,pode,confirmar,auditar,toast}=useSeg();const[lista,setLista]=useState([]);const[ld,setLd]=useState(true);const[ed,setEd]=useState(null);
+  const carregar=async()=>{const{data}=await sb.from("usuarios").select("*");setLista(data||[]);setLd(false);};
+  useEffect(()=>{if(pode("usuarios","l"))carregar();},[]);
+  if(!pode("usuarios","l"))return<div style={{textAlign:"center",padding:60}}><div style={{fontSize:44}}>🚫</div><div style={{color:"#e05050",marginTop:14,fontFamily:"'Playfair Display',serif"}}>Acesso Restrito</div></div>;
+  const alterarS=async(u)=>{if(u.id===usuario.id){toast("Não pode desativar a própria conta.","av");return;}const ok=await confirmar(`${u.ativo?"Desativar":"Ativar"} acesso de "${u.nome}"?`);if(!ok)return;await sb.from("usuarios").eq("id",u.id).update({ativo:!u.ativo});await auditar(u.ativo?"DESATIVAR_USUARIO":"ATIVAR_USUARIO","usuario:"+u.id);toast(u.ativo?"Desativado.":"Ativado.");carregar();};
+  const alterarP=async(u,p)=>{const ok=await confirmar(`Alterar papel de "${u.nome}" para "${PAPEL_LABEL[p]}"?`);if(!ok){setEd(null);return;}await sb.from("usuarios").eq("id",u.id).update({papel:p});await auditar("ALTERAR_PAPEL","usuario:"+u.id);toast("Papel atualizado.");setEd(null);carregar();};
+  return<div>
+    <div style={{color:C.muted,fontSize:12,marginBottom:16}}>Gerencie os perfis de acesso dos membros do escritório.</div>
+    {ld?<Spin/>:<div style={{display:"flex",flexDirection:"column",gap:10}}>
+      {lista.map(u=><Card key={u.id}><div style={{display:"flex",alignItems:"center",gap:14}}><Av u={u} sz={42}/>
+        <div style={{flex:1}}><div style={{color:C.white,fontSize:15,fontFamily:"'Playfair Display',serif",marginBottom:4}}>{u.nome}</div>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            {ed===u.id?<select defaultValue={u.papel} onChange={e=>alterarP(u,e.target.value)} style={{background:C.navy,border:`1px solid ${C.red}`,borderRadius:4,padding:"3px 8px",color:C.white,fontSize:12,outline:"none",fontFamily:"'EB Garamond',serif"}}>{Object.entries(PAPEL_LABEL).map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>:<PBadge papel={u.papel}/>}
+            <span style={{color:u.ativo?"#40c080":"#e05050",fontSize:10}}>● {u.ativo?"Ativo":"Inativo"}</span>
+            {u.ultimo_login&&<span style={{color:C.muted,fontSize:10}}>Último acesso: {new Date(u.ultimo_login).toLocaleString("pt-BR")}</span>}
+          </div>
+        </div>
+        {pode("usuarios","e")&&<div style={{display:"flex",gap:8}}><Btn sm v="g" onClick={()=>setEd(ed===u.id?null:u.id)}>Alterar Papel</Btn>{u.id!==usuario.id&&<Btn sm v={u.ativo?"d":"ok"} onClick={()=>alterarS(u)}>{u.ativo?"Desativar":"Ativar"}</Btn>}</div>}
+      </div></Card>)}
+    </div>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ENTRY POINT
+// ═══════════════════════════════════════════════════════════════
+export default function App(){
+  const[sb,setSb]=useState(()=>{const c=lerCfg();return c?criarSupabase(c.u,c.k):null;});
+  const[config,setConfig]=useState(!sb);
+  const[guia,setGuia]=useState(false);
+
+  if(guia)return<GuiaInstalacao onVoltar={()=>setGuia(false)}/>;
+  if(config||!sb)return<TelaConfig onConectado={s=>{setSb(s);setConfig(false);}}/>;
+  return(
+    <SegProvider sb={sb}>
+      <AppComAuth onConfig={()=>setConfig(true)} onGuia={()=>setGuia(true)}/>
+    </SegProvider>
+  );
+}
+function AppComAuth({onConfig,onGuia}){
+  const{usuario}=useSeg();
+  return usuario?<AppPrincipal onConfig={onConfig} onGuia={onGuia}/>:<TelaLogin onConfig={onConfig} onGuia={onGuia}/>;
+}

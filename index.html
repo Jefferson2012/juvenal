@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+
+    <!-- ════════════════════════════════════════════
+         METATAG ESSENCIAL — tamanho da tela no celular
+         Nunca remova esta linha!
+    ════════════════════════════════════════════ -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+
+    <!-- ════════════════════════════════════════════
+         TÍTULO E DESCRIÇÃO DO SISTEMA
+    ════════════════════════════════════════════ -->
+    <title>Juvenal Antonio da Silva — Advogados Associados</title>
+    <meta name="description" content="Sistema interno de gestão de processos jurídicos — Juvenal Antonio da Silva Advogados Associados" />
+
+    <!-- ════════════════════════════════════════════
+         PWA — CONFIGURAÇÕES DE INSTALAÇÃO
+         Estas tags fazem o sistema ser instalável
+         como app no computador e no celular
+    ════════════════════════════════════════════ -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#1e3280" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- ════════════════════════════════════════════
+         CONFIGURAÇÕES ESPECÍFICAS PARA iPHONE/iPAD
+         Sem estas tags, o app não funciona bem no iOS
+    ════════════════════════════════════════════ -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Juvenal Adv." />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    
+    <!-- Splash screen para iPhone (opcional, mas profissional) -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+
+    <!-- ════════════════════════════════════════════
+         ÍCONE NO NAVEGADOR (favico)
+    ════════════════════════════════════════════ -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- ════════════════════════════════════════════
+         ESTILO BASE — fundo escuro e fontes
+    ════════════════════════════════════════════ -->
+    <style>
+      /* Remove margens padrão do navegador */
+      *, *::before, *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      /* O app ocupa toda a tela */
+      html, body, #root {
+        height: 100%;
+        width: 100%;
+      }
+
+      /* Cor de fundo enquanto o app carrega */
+      body {
+        background-color: #0b1230;
+        color: #f5f5f8;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        /* Evita zoom acidental ao tocar duas vezes no iPhone */
+        touch-action: manipulation;
+        /* Evita seleção de texto acidental ao rolar */
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      /* Barra de rolagem personalizada (só aparece no computador) */
+      ::-webkit-scrollbar { width: 5px; }
+      ::-webkit-scrollbar-track { background: #0b1230; }
+      ::-webkit-scrollbar-thumb { background: #1e3280; border-radius: 3px; }
+
+      /* Tela de carregamento inicial */
+      #loading {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: #0b1230;
+        gap: 16px;
+        z-index: 9999;
+        transition: opacity 0.4s ease;
+      }
+      #loading .logo-box {
+        width: 70px;
+        height: 70px;
+        background: #1e3280;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 52px;
+        font-family: Georgia, serif;
+        font-style: italic;
+        color: white;
+        position: relative;
+      }
+      #loading .dot {
+        position: absolute;
+        bottom: 4px;
+        right: -6px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #cc1122;
+      }
+      #loading .nome {
+        font-family: Georgia, serif;
+        font-size: 15px;
+        color: #b0b8d0;
+        letter-spacing: 0.5px;
+        text-align: center;
+      }
+      #loading .sub {
+        font-family: Georgia, serif;
+        font-size: 12px;
+        color: #5a6a9a;
+        font-style: italic;
+      }
+      #loading .barra {
+        width: 120px;
+        height: 2px;
+        background: #1e3280;
+        border-radius: 2px;
+        overflow: hidden;
+        margin-top: 8px;
+      }
+      #loading .progresso {
+        height: 100%;
+        background: #cc1122;
+        border-radius: 2px;
+        animation: carregar 1.5s ease-in-out infinite;
+      }
+      @keyframes carregar {
+        0%   { width: 0%;   margin-left: 0%; }
+        50%  { width: 60%;  margin-left: 20%; }
+        100% { width: 0%;   margin-left: 100%; }
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- Tela de carregamento que some quando o app fica pronto -->
+    <div id="loading">
+      <div class="logo-box">
+        J
+        <div class="dot"></div>
+      </div>
+      <div class="nome">Juvenal Antonio da Silva</div>
+      <div class="sub">Advogados Associados</div>
+      <div class="barra">
+        <div class="progresso"></div>
+      </div>
+    </div>
+
+    <!-- O app React é carregado aqui -->
+    <div id="root"></div>
+
+    <!-- ════════════════════════════════════════════
+         REGISTRO DO SERVICE WORKER
+         Este código é o que torna o app instalável
+         e permite funcionar sem internet
+    ════════════════════════════════════════════ -->
+    <script>
+      // Quando o app terminar de carregar, esconde a tela de loading
+      window.addEventListener('load', function() {
+        // Remove a tela de carregamento após 1 segundo
+        setTimeout(function() {
+          var loading = document.getElementById('loading');
+          if (loading) {
+            loading.style.opacity = '0';
+            setTimeout(function() { loading.remove(); }, 400);
+          }
+        }, 1000);
+
+        // Registra o Service Worker (responsável por instalar o app)
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker
+            .register('/sw.js')
+            .then(function() {
+              console.log('✅ Sistema pronto para instalação!');
+            })
+            .catch(function(erro) {
+              console.warn('⚠️ Service Worker não registrado:', erro);
+            });
+        }
+      });
+    </script>
+
+    <!-- Carrega o sistema React -->
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
